@@ -27,8 +27,8 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android 36 platform
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: Install Android 35 platform
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -55,9 +55,13 @@ jobs:
           CS_KEY_PASSWORD: criticalstateci
         run: gradle :app:testDebugUnitTest :app:assembleRelease --stacktrace
 
+      - name: Verify DEX format
+        run: |
+          unzip -p app/build/outputs/apk/release/app-release.apk classes.dex | head -c 8 | xxd
+
       - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
-          name: Critical-State-GMee-release-test
+          name: Critical-State-GMee-dex035-test
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
