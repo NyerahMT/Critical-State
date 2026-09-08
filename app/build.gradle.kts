@@ -15,10 +15,18 @@ android {
         // minSdk 23 also keeps D8 on the older DEX 035 format instead of DEX 038.
         minSdk = 23
         targetSdk = 30
-        versionCode = 5
-        versionName = "0.1.4-gmee-dex035"
+        versionCode = 6
+        versionName = "0.1.5-gmee-fdroid-envelope"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    // The known-good F-Droid APK does not contain Gradle's encrypted dependency
+    // metadata signing-block entry. Strip it for maximum compatibility with the
+    // G-Mee's custom package installer.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
     }
 
     signingConfigs {
