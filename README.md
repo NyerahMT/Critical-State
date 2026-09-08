@@ -48,7 +48,7 @@ Rendering and gameplay UI must not silently change the governing physics. Simula
 
 ## Build
 
-The project targets Android API 37 and uses Jetpack Compose.
+The project targets Android API 36 and uses Jetpack Compose.
 
 GitHub Actions runs unit tests and builds `app-debug.apk`. Open the latest **Android CI** workflow run and download the `Critical-State-debug` artifact.
 
