@@ -12,13 +12,28 @@ android {
         applicationId = "com.nyerahworks.criticalstate.compat"
         minSdk = 26
         targetSdk = 33
-        versionCode = 2
-        versionName = "0.1.1-compat"
+        versionCode = 3
+        versionName = "0.1.2-compat-legacy-signing"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        getByName("debug") {
+            // Normal Android 13 accepts modern APK signatures, but some custom
+            // package installers are more reliable when the legacy JAR/v1
+            // signature is present as well.
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = false
+        }
+    }
+
     buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
