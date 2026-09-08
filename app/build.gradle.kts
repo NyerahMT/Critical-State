@@ -7,22 +7,32 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        // Use a separate package while diagnosing the G-Mee installer so a hidden
-        // or stale package can never conflict with this build.
+        // Separate diagnostic package so it can never conflict with a prior install.
         applicationId = "com.nyerahworks.criticalstate.compat"
         minSdk = 26
         targetSdk = 33
-        versionCode = 3
-        versionName = "0.1.2-compat-legacy-signing"
+        versionCode = 4
+        versionName = "0.1.3-compat-release-signing"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
         getByName("debug") {
-            // Normal Android 13 accepts modern APK signatures, but some custom
-            // package installers are more reliable when the legacy JAR/v1
-            // signature is present as well.
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = false
+        }
+
+        create("compatRelease") {
+            val keystorePath = System.getenv("CS_KEYSTORE")
+            if (!keystorePath.isNullOrBlank()) {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("CS_STORE_PASSWORD")
+                keyAlias = System.getenv("CS_KEY_ALIAS")
+                keyPassword = System.getenv("CS_KEY_PASSWORD")
+            }
             enableV1Signing = true
             enableV2Signing = true
             enableV3Signing = true
@@ -36,6 +46,7 @@ android {
         }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("compatRelease")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
