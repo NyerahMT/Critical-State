@@ -8,15 +8,17 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        // Separate diagnostic package so it can never conflict with a prior install.
-        applicationId = "com.nyerahworks.criticalstate.compat"
+        // Fresh diagnostic package ID for the G-Mee install test. This package
+        // has never been used by any prior Critical State APK, so Android cannot
+        // reject it because of a stale package/signing-certificate collision.
+        applicationId = "com.nyerahworks.criticalstate.gmee01"
 
         // Match the compatibility envelope of the known-good F-Droid APK.
         // minSdk 23 also keeps D8 on the older DEX 035 format instead of DEX 038.
         minSdk = 23
         targetSdk = 30
-        versionCode = 6
-        versionName = "0.1.5-gmee-fdroid-envelope"
+        versionCode = 7
+        versionName = "0.1.6-gmee01-fresh-package"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
