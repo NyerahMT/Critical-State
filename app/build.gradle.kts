@@ -4,15 +4,19 @@ plugins {
 
 android {
     namespace = "com.nyerahworks.criticalstate"
-    compileSdk = 36
+    // Match the compile SDK used by the known-good F-Droid APK on the G-Mee.
+    compileSdk = 35
 
     defaultConfig {
         // Separate diagnostic package so it can never conflict with a prior install.
         applicationId = "com.nyerahworks.criticalstate.compat"
-        minSdk = 26
-        targetSdk = 33
-        versionCode = 4
-        versionName = "0.1.3-compat-release-signing"
+
+        // Match the compatibility envelope of the known-good F-Droid APK.
+        // minSdk 23 also keeps D8 on the older DEX 035 format instead of DEX 038.
+        minSdk = 23
+        targetSdk = 30
+        versionCode = 5
+        versionName = "0.1.4-gmee-dex035"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
