@@ -35,12 +35,29 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Test and build debug APK
-        run: gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace
+      - name: Create temporary non-debug signing key
+        run: |
+          keytool -genkeypair -v \
+            -keystore "$RUNNER_TEMP/critical-state-release.jks" \
+            -storepass criticalstateci \
+            -keypass criticalstateci \
+            -alias criticalstate \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=NyerahWorks Critical State, OU=Development, O=NyerahWorks, L=Canton, ST=Ohio, C=US"
 
-      - name: Upload debug APK
+      - name: Test and build release APK
+        env:
+          CS_KEYSTORE: ${{ runner.temp }}/critical-state-release.jks
+          CS_STORE_PASSWORD: criticalstateci
+          CS_KEY_ALIAS: criticalstate
+          CS_KEY_PASSWORD: criticalstateci
+        run: gradle :app:testDebugUnitTest :app:assembleRelease --stacktrace
+
+      - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
-          name: Critical-State-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: Critical-State-GMee-release-test
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
