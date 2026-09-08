@@ -21,6 +21,13 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // This diagnostic APK intentionally targets API 30 to match the known-good
+    // F-Droid package that installs on the G-Mee. Suppress only the modern Play
+    // Store target-SDK lint rule; all other release lint checks remain active.
+    lint {
+        disable.add("ExpiredTargetSdkVersion")
+    }
+
     // The known-good F-Droid APK does not contain Gradle's encrypted dependency
     // metadata signing-block entry. Strip it for maximum compatibility with the
     // G-Mee's custom package installer.
