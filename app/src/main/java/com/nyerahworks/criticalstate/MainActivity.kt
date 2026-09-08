@@ -76,9 +76,7 @@ class MainActivity : Activity() {
         }
         scroll.addView(root)
 
-        root.addView(text("CRITICAL STATE", 28f, Color.rgb(236, 240, 244), true).apply {
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BLACK)
-        })
+        root.addView(text("CRITICAL STATE", 28f, Color.rgb(236, 240, 244), true))
 
         statusText = text("AT POWER", 17f, Color.rgb(231, 184, 75), true)
         root.addView(statusText)
