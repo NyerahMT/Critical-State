@@ -1,471 +1,260 @@
 package com.nyerahworks.criticalstate
 
+import android.app.Activity
+import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.isTraceInProgress
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
+import android.os.Handler
+import android.os.Looper
+import android.view.Gravity
+import android.view.View
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.SeekBar
+import android.widget.TextView
 import com.nyerahworks.criticalstate.sim.PlantState
 import com.nyerahworks.criticalstate.sim.ReactorSimulator
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import java.util.Locale
 import kotlin.math.abs
 
-class MainActivity : ComponentActivity() {
+class MainActivity : Activity() {
+    private val simulator = ReactorSimulator()
+    private val handler = Handler(Looper.getMainLooper())
+
+    private var running = true
+    private var timeScale = 1.0
+
+    private lateinit var statusText: TextView
+    private lateinit var clockText: TextView
+    private lateinit var powerText: TextView
+    private lateinit var generatorText: TextView
+    private lateinit var coolantText: TextView
+    private lateinit var pressureText: TextView
+    private lateinit var reactivityText: TextView
+    private lateinit var periodText: TextView
+    private lateinit var rodValueText: TextView
+    private lateinit var turbineValueText: TextView
+    private lateinit var pauseButton: Button
+
+    private val tick = object : Runnable {
+        override fun run() {
+            if (running) simulator.advance(0.05, timeScale)
+            render(simulator.snapshot())
+            handler.postDelayed(this, 50)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            CriticalStateTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    CriticalStateScreen()
-                }
-            }
+        window.statusBarColor = Color.rgb(9, 13, 18)
+        window.navigationBarColor = Color.rgb(9, 13, 18)
+        setContentView(buildUi())
+        render(simulator.snapshot())
+    }
+
+    override fun onStart() {
+        super.onStart()
+        handler.removeCallbacks(tick)
+        handler.post(tick)
+    }
+
+    override fun onStop() {
+        handler.removeCallbacks(tick)
+        super.onStop()
+    }
+
+    private fun buildUi(): View {
+        val scroll = ScrollView(this).apply {
+            setBackgroundColor(Color.rgb(11, 15, 20))
+            isFillViewport = true
         }
-    }
-}
 
-private val CriticalStateColors = darkColorScheme(
-    primary = Color(0xFFE7B84B),
-    onPrimary = Color(0xFF16130B),
-    secondary = Color(0xFF9CB7C8),
-    background = Color(0xFF0B0F14),
-    surface = Color(0xFF111820),
-    surfaceVariant = Color(0xFF18212B),
-    onBackground = Color(0xFFE8EDF2),
-    onSurface = Color(0xFFE8EDF2),
-    onSurfaceVariant = Color(0xFFAEBBC6),
-    error = Color(0xFFFF7A70),
-)
-
-@Composable
-private fun CriticalStateTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = CriticalStateColors,
-        content = content,
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun CriticalStateScreen() {
-    val simulator = remember { ReactorSimulator() }
-    var state by remember { mutableStateOf(simulator.snapshot()) }
-    var running by remember { mutableStateOf(true) }
-    var timeScale by remember { mutableStateOf(1.0) }
-
-    LaunchedEffect(running, timeScale) {
-        if (!running) return@LaunchedEffect
-        while (isActive) {
-            state = simulator.advance(wallSeconds = 0.05, timeScale = timeScale)
-            delay(50)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(22), dp(18), dp(28))
         }
-    }
+        scroll.addView(root)
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            item {
-                Header(state)
-            }
+        root.addView(text("CRITICAL STATE", 28f, Color.rgb(236, 240, 244), true).apply {
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BLACK)
+        })
 
-            item {
-                MetricGrid(state)
-            }
+        statusText = text("AT POWER", 17f, Color.rgb(231, 184, 75), true)
+        root.addView(statusText)
 
-            item {
-                ControlCard(
-                    state = state,
-                    running = running,
-                    timeScale = timeScale,
-                    onRunningChange = { running = it },
-                    onTimeScaleChange = { timeScale = it },
-                    onRodChange = {
-                        simulator.setRodInsertion(it)
-                        state = simulator.snapshot()
-                    },
-                    onTurbineLoadChange = {
-                        simulator.setTurbineLoad(it)
-                        state = simulator.snapshot()
-                    },
-                    onTrip = {
-                        simulator.trip()
-                        state = simulator.snapshot()
-                    },
-                    onReset = {
-                        simulator.reset()
-                        state = simulator.snapshot()
-                    },
-                )
-            }
+        clockText = mono("SIM T+00:00:00", 13f, Color.rgb(174, 187, 198))
+        root.addView(clockText)
+        root.addView(space(16))
 
-            item {
-                ModelStatusCard(state)
-            }
+        powerText = metric(root, "REACTOR POWER")
+        generatorText = metric(root, "GENERATOR")
+        coolantText = metric(root, "THERMAL")
+        pressureText = metric(root, "PRIMARY")
+        reactivityText = metric(root, "REACTIVITY")
+        periodText = metric(root, "REACTOR PERIOD")
 
-            item {
-                Text(
-                    text = "GENERIC REDUCED-ORDER PWR • ENTERTAINMENT / EDUCATION • NOT OPERATOR TRAINING",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 6.dp),
-                )
-            }
+        root.addView(space(12))
+        root.addView(sectionTitle("PLANT CONTROL"))
+
+        rodValueText = mono("55.0 %", 14f, Color.WHITE)
+        root.addView(controlHeader("CONTROL BANK INSERTION", rodValueText))
+        root.addView(SeekBar(this).apply {
+            max = 1000
+            progress = 550
+            setOnSeekBarChangeListener(simpleSeek { progress ->
+                val insertion = progress / 1000.0
+                simulator.setRodInsertion(insertion)
+                rodValueText.text = String.format(Locale.US, "%.1f %%", insertion * 100.0)
+                render(simulator.snapshot())
+            })
+        })
+
+        turbineValueText = mono("100 %", 14f, Color.WHITE)
+        root.addView(controlHeader("TURBINE LOAD DEMAND", turbineValueText))
+        root.addView(SeekBar(this).apply {
+            max = 80
+            progress = 70
+            setOnSeekBarChangeListener(simpleSeek { progress ->
+                val load = (30 + progress) / 100.0
+                simulator.setTurbineLoad(load)
+                turbineValueText.text = String.format(Locale.US, "%.0f %%", load * 100.0)
+                render(simulator.snapshot())
+            })
+        })
+
+        root.addView(text("SIMULATION SPEED", 12f, Color.rgb(174, 187, 198), true))
+        root.addView(buttonRow(
+            button("1×") { timeScale = 1.0 },
+            button("10×") { timeScale = 10.0 },
+            button("60×") { timeScale = 60.0 },
+        ))
+
+        pauseButton = button("PAUSE") {
+            running = !running
+            pauseButton.text = if (running) "PAUSE" else "RUN"
         }
-    }
-}
+        val trip = button("TRIP") {
+            simulator.trip()
+            render(simulator.snapshot())
+        }.apply { setTextColor(Color.rgb(255, 122, 112)) }
+        val reset = button("RESET") {
+            simulator.reset()
+            running = true
+            pauseButton.text = "PAUSE"
+            render(simulator.snapshot())
+        }
+        root.addView(buttonRow(pauseButton, trip, reset))
 
-@Composable
-private fun Header(state: PlantState) {
-    val status = when {
-        state.tripped -> "REACTOR TRIP"
-        state.fissionPowerMw < ReactorSimulator.REFERENCE_THERMAL_POWER_MW * 0.02 -> "SUBCRITICAL / LOW POWER"
-        else -> "AT POWER"
+        root.addView(space(16))
+        root.addView(sectionTitle("MODEL STATUS"))
+        root.addView(text("Neutronics  •  six-group point kinetics", 13f, Color.rgb(232, 237, 242), false))
+        root.addView(text("Rod worth    •  S-curve fallback / calibration required", 13f, Color.rgb(174, 187, 198), false))
+        root.addView(text("Thermal      •  lumped fuel/coolant energy balance", 13f, Color.rgb(174, 187, 198), false))
+        root.addView(text("Pressure     •  reference value held; pressurizer deferred", 13f, Color.rgb(174, 187, 198), false))
+
+        root.addView(space(18))
+        root.addView(text(
+            "GENERIC REDUCED-ORDER PWR • ENTERTAINMENT / EDUCATION • NOT OPERATOR TRAINING",
+            10f,
+            Color.rgb(130, 145, 158),
+            false,
+        ))
+
+        return scroll
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            text = "CRITICAL STATE",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Black,
-            letterSpacing = MaterialTheme.typography.headlineMedium.letterSpacing,
+    private fun render(state: PlantState) {
+        statusText.text = when {
+            state.tripped -> "REACTOR TRIP"
+            state.fissionPowerMw < ReactorSimulator.REFERENCE_THERMAL_POWER_MW * 0.02 -> "SUBCRITICAL / LOW POWER"
+            else -> "AT POWER"
+        }
+        statusText.setTextColor(if (state.tripped) Color.rgb(255, 122, 112) else Color.rgb(231, 184, 75))
+        clockText.text = "SIM T+${formatDuration(state.simulationSeconds)}"
+
+        powerText.text = String.format(
+            Locale.US,
+            "%.1f %%   •   %.0f MWth",
+            state.fissionPowerMw / ReactorSimulator.REFERENCE_THERMAL_POWER_MW * 100.0,
+            state.fissionPowerMw,
         )
-        Text(
-            text = status,
-            style = MaterialTheme.typography.titleMedium,
-            color = if (state.tripped) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.Bold,
-        )
-        Text(
-            text = "SIM T+${formatDuration(state.simulationSeconds)}",
-            style = MaterialTheme.typography.labelLarge,
-            fontFamily = FontFamily.Monospace,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        generatorText.text = String.format(Locale.US, "%.0f MW   •   load %.0f %%", state.generatorPowerMw, state.turbineLoad * 100.0)
+        coolantText.text = String.format(Locale.US, "Coolant %.1f K   •   Fuel %.0f K", state.coolantTemperatureK, state.fuelTemperatureK)
+        pressureText.text = String.format(Locale.US, "%.2f MPa", state.primaryPressureMpa)
+        reactivityText.text = String.format(Locale.US, "%+.1f pcm", state.totalReactivityPcm)
+        periodText.text = state.reactorPeriodSeconds?.let {
+            if (abs(it) > 9999.0) "> 9999 s" else String.format(Locale.US, "%+.1f s", it)
+        } ?: "STABLE"
+        rodValueText.text = String.format(Locale.US, "%.1f %%", state.rodInsertion * 100.0)
+        turbineValueText.text = String.format(Locale.US, "%.0f %%", state.turbineLoad * 100.0)
     }
-}
 
-@Composable
-private fun MetricGrid(state: PlantState) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            MetricCard(
-                label = "REACTOR POWER",
-                value = String.format(Locale.US, "%.1f %%", state.fissionPowerMw / ReactorSimulator.REFERENCE_THERMAL_POWER_MW * 100.0),
-                detail = String.format(Locale.US, "%.0f MWth", state.fissionPowerMw),
-                modifier = Modifier.weight(1f),
-            )
-            MetricCard(
-                label = "GENERATOR",
-                value = String.format(Locale.US, "%.0f MW", state.generatorPowerMw),
-                detail = String.format(Locale.US, "Load %.0f %%", state.turbineLoad * 100.0),
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            MetricCard(
-                label = "COOLANT",
-                value = String.format(Locale.US, "%.1f K", state.coolantTemperatureK),
-                detail = String.format(Locale.US, "Fuel %.0f K", state.fuelTemperatureK),
-                modifier = Modifier.weight(1f),
-            )
-            MetricCard(
-                label = "PRIMARY",
-                value = String.format(Locale.US, "%.2f MPa", state.primaryPressureMpa),
-                detail = "Pressurizer model deferred",
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            MetricCard(
-                label = "REACTIVITY",
-                value = String.format(Locale.US, "%+.1f pcm", state.totalReactivityPcm),
-                detail = "Rod + temperature feedback",
-                modifier = Modifier.weight(1f),
-            )
-            MetricCard(
-                label = "PERIOD",
-                value = state.reactorPeriodSeconds?.let {
-                    if (abs(it) > 9999.0) "> 9999 s" else String.format(Locale.US, "%+.1f s", it)
-                } ?: "STABLE",
-                detail = "Instantaneous estimate",
-                modifier = Modifier.weight(1f),
-            )
+    private fun metric(parent: LinearLayout, label: String): TextView {
+        parent.addView(text(label, 11f, Color.rgb(156, 177, 194), true))
+        return mono("—", 19f, Color.rgb(232, 237, 242)).also {
+            it.setPadding(0, 0, 0, dp(12))
+            parent.addView(it)
         }
     }
-}
 
-@Composable
-private fun MetricCard(
-    label: String,
-    value: String,
-    detail: String,
-    modifier: Modifier = Modifier,
-) {
-    Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = value,
-                style = MaterialTheme.typography.titleLarge,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = detail,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+    private fun sectionTitle(value: String) = text(value, 15f, Color.rgb(231, 184, 75), true).apply {
+        setPadding(0, dp(6), 0, dp(8))
+    }
+
+    private fun controlHeader(label: String, value: TextView): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        addView(text(label, 12f, Color.rgb(174, 187, 198), true), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        addView(value)
+    }
+
+    private fun button(label: String, action: () -> Unit) = Button(this).apply {
+        text = label
+        isAllCaps = false
+        setOnClickListener { action() }
+    }
+
+    private fun buttonRow(vararg buttons: Button) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER
+        buttons.forEach { button ->
+            addView(button, LinearLayout.LayoutParams(0, dp(52), 1f).apply {
+                setMargins(dp(3), dp(6), dp(3), dp(6))
+            })
         }
     }
-}
 
-@Composable
-private fun ControlCard(
-    state: PlantState,
-    running: Boolean,
-    timeScale: Double,
-    onRunningChange: (Boolean) -> Unit,
-    onTimeScaleChange: (Double) -> Unit,
-    onRodChange: (Double) -> Unit,
-    onTurbineLoadChange: (Double) -> Unit,
-    onTrip: () -> Unit,
-    onReset: () -> Unit,
-) {
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Text(
-                text = "PLANT CONTROL",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-            )
-
-            ControlSlider(
-                label = "CONTROL BANK INSERTION",
-                valueText = String.format(Locale.US, "%.1f %%", state.rodInsertion * 100.0),
-                value = state.rodInsertion.toFloat(),
-                range = 0f..1f,
-                enabled = !state.tripped,
-                onChange = { onRodChange(it.toDouble()) },
-            )
-
-            ControlSlider(
-                label = "TURBINE LOAD DEMAND",
-                valueText = String.format(Locale.US, "%.0f %%", state.turbineLoad * 100.0),
-                value = state.turbineLoad.toFloat(),
-                range = 0.30f..1.10f,
-                enabled = true,
-                onChange = { onTurbineLoadChange(it.toDouble()) },
-            )
-
-            Text(
-                text = "SIMULATION SPEED",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = FontWeight.Bold,
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                listOf(1.0, 10.0, 60.0).forEach { speed ->
-                    FilterChip(
-                        selected = timeScale == speed,
-                        onClick = { onTimeScaleChange(speed) },
-                        label = { Text("${speed.toInt()}×") },
-                    )
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Button(
-                    onClick = { onRunningChange(!running) },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(if (running) "PAUSE" else "RUN")
-                }
-                Button(
-                    onClick = onTrip,
-                    enabled = !state.tripped,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
-                        contentColor = Color.Black,
-                    ),
-                ) {
-                    Text("TRIP")
-                }
-                Button(
-                    onClick = onReset,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("RESET")
-                }
-            }
-        }
+    private fun text(value: String, size: Float, color: Int, bold: Boolean) = TextView(this).apply {
+        text = value
+        textSize = size
+        setTextColor(color)
+        if (bold) setTypeface(typeface, Typeface.BOLD)
     }
-}
 
-@Composable
-private fun ControlSlider(
-    label: String,
-    valueText: String,
-    value: Float,
-    range: ClosedFloatingPointRange<Float>,
-    enabled: Boolean,
-    onChange: (Float) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = valueText,
-                style = MaterialTheme.typography.labelLarge,
-                fontFamily = FontFamily.Monospace,
-            )
-        }
-        Slider(
-            value = value,
-            onValueChange = onChange,
-            valueRange = range,
-            enabled = enabled,
-        )
+    private fun mono(value: String, size: Float, color: Int) = text(value, size, color, false).apply {
+        typeface = Typeface.MONOSPACE
     }
-}
 
-@Composable
-private fun ModelStatusCard(state: PlantState) {
-    val rows = listOf(
-        "Neutronics" to "Six-group point kinetics • implicit update",
-        "Rod worth" to "S-curve fallback • calibration required",
-        "Thermal" to "Lumped fuel/coolant energy balance • estimated constants",
-        "Secondary" to "Reduced heat-removal response • calibration required",
-        "Pressure" to "Held at reference state • solver deferred",
-    )
-
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(
-                text = "MODEL STATUS",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-            )
-            rows.forEach { (name, description) ->
-                Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                    Text(
-                        text = name,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        text = description,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            state.diagnostic?.let {
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = it,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-        }
+    private fun space(heightDp: Int) = View(this).apply {
+        layoutParams = LinearLayout.LayoutParams(1, dp(heightDp))
     }
-}
 
-private fun formatDuration(seconds: Double): String {
-    val total = seconds.toLong().coerceAtLeast(0)
-    val hours = total / 3600
-    val minutes = (total % 3600) / 60
-    val secs = total % 60
-    return String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, secs)
+    private fun simpleSeek(onProgress: (Int) -> Unit) = object : SeekBar.OnSeekBarChangeListener {
+        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+            if (fromUser) onProgress(progress)
+        }
+        override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+        override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private fun formatDuration(seconds: Double): String {
+        val total = seconds.toLong().coerceAtLeast(0)
+        val hours = total / 3600
+        val minutes = (total % 3600) / 60
+        val secs = total % 60
+        return String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, secs)
+    }
 }
