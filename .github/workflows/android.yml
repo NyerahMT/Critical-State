@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -65,3 +65,14 @@ jobs:
           name: Critical-State-GMee-dex035-test
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
+
+      - name: Publish direct APK download
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk Critical-State-GMee-Test.apk
+          if ! gh release view gmee-test >/dev/null 2>&1; then
+            gh release create gmee-test --target "$GITHUB_SHA" --title "GMee Test Build" --notes "Direct APK download for GMee installation testing."
+          fi
+          gh release upload gmee-test Critical-State-GMee-Test.apk --clobber
