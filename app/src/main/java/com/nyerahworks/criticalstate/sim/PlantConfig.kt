@@ -95,7 +95,9 @@ internal object ReferencePlant {
 
     // Neutronics / chemistry calibration state.
     const val REFERENCE_ROD_INSERTION = 0.55
-    const val TOTAL_CONTROL_BANK_WORTH = 0.0040
+    // 5000 pcm integral full-stroke worth. With the current integral-worth shape,
+    // a SCRAM from the 55% reference position inserts about 2004 pcm.
+    const val TOTAL_CONTROL_BANK_WORTH = 0.0500
     const val PROMPT_GENERATION_TIME_S = 2.0e-5
     const val DOPPLER_COEFF_PER_K = -1.4e-5
     const val MODERATOR_DENSITY_COEFF_PER_KG_M3 = 2.0e-5
@@ -129,6 +131,13 @@ internal object ReferencePlant {
             "kg/s",
             ModelStatus.BENCHMARK_DERIVED,
             "MIT BEAVRS",
+        ),
+        "neutronics.control_bank_worth" to ParameterProvenance(
+            TOTAL_CONTROL_BANK_WORTH * 1.0e5,
+            "pcm full stroke",
+            ModelStatus.CALIBRATION_REQUIRED,
+            "Generic reduced-order shutdown target",
+            "Integral full-stroke worth; 55% reference insertion to full insertion is about 2004 pcm.",
         ),
         "primary.loop_geometry" to ParameterProvenance(
             LOOP_LIQUID_VOLUME_M3,
