@@ -2,66 +2,141 @@
 
 **Critical State** is a mobile-first, reduced-order pressurized-water-reactor simulation game by NyerahWorks.
 
-The goal is not to reproduce a specific operating plant or provide operator training. The goal is to make the plant behave causally: reactor power comes from neutronics, heat moves through stored thermal states, primary pressure now emerges from a conserved pressurizer state, and later systems will extend that chain through explicit primary-loop hydraulics, steam generators, turbine, condenser, feedwater, electrical systems, degradation, and economics.
+The plant is intentionally built as a coupled physical system rather than a collection of scripted gauges. Reactor power comes from neutron kinetics. Fission and decay heat move through fuel, cladding and coolant. Primary flow follows pump head, hydraulic resistance, coolant inertia and buoyancy. Steam generation follows primary-to-secondary heat transfer and secondary inventory. Turbine power follows steam flow and enthalpy drop. Generator output follows shaft/grid dynamics. Condenser pressure and feedwater behavior close the power-conversion loop.
 
-## Current prototype
+The guiding rule is:
 
-The Android slice now includes:
+> **Simplification may reduce spatial resolution or component detail, but it must not replace physical causality with an arbitrary gameplay mapping.**
 
-- six-group point kinetics with implicit integration;
-- an S-shaped generic control-bank worth model;
-- fuel and moderator temperature feedback;
-- lumped fuel/coolant energy storage;
-- a reduced secondary heat-removal response;
-- turbine load demand;
-- a fixed-volume, two-phase pressurizer with conserved mass and internal energy;
-- primary thermal-expansion surge coupling;
-- automatic proportional pressurizer heater and spray response;
-- IAPWS-IF97 water/steam properties through a replaceable property adapter;
-- reactor trip/reset;
-- 1x, 10x, and 60x simulation speed;
-- model-status labels that distinguish reference structure from estimated/calibration-required scaffolding;
-- unit tests for steady-state behavior, rod-withdrawal response, and pressurizer surge direction;
-- GitHub Actions builds that test and produce a G-Mee-compatible APK.
+## Current coupled plant
 
-## Model basis
+Version **0.3.0-coupled-plant** implements the first complete real-time reference-plant chain:
 
-Development follows the latest **NYERAH Reactor Simulator — Mathematical Models and Physical Basis, Revision 0.1 (27 August 2026)** model-theory specification.
+- six-group point reactor kinetics with equilibrium precursor initialization, source term and inhour-period verification;
+- finite-speed control-bank motion, nonlinear integral worth and finite-time SCRAM insertion;
+- Doppler, moderator-density, soluble-boron, iodine/xenon and promethium/samarium reactivity;
+- eleven-group stored-energy decay heat preserving prior operating history;
+- six axial core thermal regions with radial fuel storage, cladding storage, coolant enthalpy transport, hot-channel indication and IF97 subcooling margin;
+- four independent primary loops with hot/cold-leg transport, Darcy/minor losses, dynamic mass flow, centrifugal RCP curves, rotor inertia, coastdown and natural-circulation head;
+- a fixed-volume two-phase pressurizer with conserved mass/internal energy, surge, heaters, spray and generic relief flow;
+- four dynamic steam generators with segmented primary heat transfer, tube-wall thermal inertia, conserved secondary mass/energy, boiling, steam export, level and feedwater demand;
+- a dynamic main-steam header;
+- a two-stage reduced steam turbine using a Stodola pressure-flow relation and IF97 isentropic expansion;
+- turbine-generator inertia, grid synchronization/breaker logic, swing-equation behavior, gross/net MW and reactive-power indication;
+- condenser/hotwell mass and energy storage with cooling-water heat rejection and thermodynamic vacuum;
+- a physical feedwater train with pump dynamics, valve distribution and extraction-steam heating;
+- dynamic instrumentation and generic redundant protection channels with latching reactor-trip logic;
+- hidden equipment condition that changes physical component parameters rather than a visible health-stat multiplier;
+- long-timescale generation/revenue/debt accounting driven by actual net electrical output;
+- whole-plant mass/energy residual diagnostics;
+- 1x, 10x and 60x simulation speeds using bounded physical substeps rather than enlarged game timesteps.
 
-Core rule:
+## Reference plant
 
-> Simplification may reduce spatial resolution or component detail, but it shall not replace a physical causal relationship with an arbitrary gameplay mapping.
+The first reference plant is a **generic four-loop commercial PWR**. Core scale and selected physics data are anchored where appropriate to public MIT BEAVRS benchmark information; missing balance-of-plant geometry and performance data use compatible public engineering references or explicitly tagged calibration-required estimates.
 
-The initial reference scale is a generic four-loop commercial PWR anchored where appropriate to public benchmark data. Estimated or calibration-required parameters are labeled as such in code and are not treated as validated plant data.
+Representative scale:
 
-The pressurizer is intentionally a control-oriented equilibrium model rather than a spatial two-fluid model. Vessel mass and internal energy are state variables; pressure and level are recovered from a saturated IF97 equilibrium at fixed vessel volume. Primary coolant thermal expansion changes pressurizer inventory through a reduced surge-line boundary. This boundary is designed to be replaced when explicit primary-loop hydraulic control volumes are added.
+- reactor thermal power: 3411 MWth;
+- four primary loops;
+- nominal RCS pressure: 15.51 MPa;
+- total reference core flow: about 17,083 kg/s;
+- 193 fuel assemblies, 17 x 17 lattice, 264 fuel rods/assembly;
+- active fuel length: 3.6576 m;
+- steam-generator secondary pressure: roughly 6.2 MPa reference state;
+- roughly 1 GWe-class power conversion.
+
+These values define a game/reference model. They are **not** a reconstruction of an operating station.
 
 ## Architecture
 
 ```text
-Android UI / instrumentation
-        ↓
-Simulation state
-        ↓
-Neutronics → thermal nodes → pressurizer / pressure control
-        ↓
-Future: explicit RCS hydraulics / SG / turbine / condenser / feedwater / grid
-        ↓
-Future: degradation / maintenance / economics / events
+Player commands
+    |
+    v
+Actuators / automatic controllers
+    |
+    +--> Rod drive --> reactivity --> six-group kinetics
+    |                                 |
+    |                                 v
+    |                         fission + decay heat
+    |                                 |
+    |                                 v
+    |                       fuel / clad / coolant
+    |                                 |
+    |                                 v
+    +--> RCPs --> four-loop RCS hydraulics <--> pressurizer
+                                      |
+                                      v
+                           four steam generators
+                                      |
+                                      v
+                              main steam header
+                                      |
+                                      v
+                           turbine / shaft / grid
+                                      |
+                                      v
+                             condenser / hotwell
+                                      |
+                                      v
+                               feedwater train
+                                      |
+                                      +--------> SGs
+
+True physical state --> sensors --> protection / UI
+True physical state --> conservation audit / degradation / economics
 ```
 
-Rendering and gameplay UI must not silently change the governing physics. Simulator state and solver code live separately from instrumentation. Thermodynamic properties are also isolated behind a small interface so the underlying IF97 implementation can be replaced without rewriting plant models.
+`ReactorSimulator` is the plant orchestrator, not the source of subsystem physics. Governing models are split across dedicated classes under `sim/` so individual closures can be replaced as fidelity improves.
 
-## Build
+## Numerical strategy
 
-The project compiles against Android API 35 while retaining the current G-Mee compatibility target of API 30. The UI uses Android framework views to minimize runtime/dependency overhead on the target device.
+Rendering is decoupled from the physical solver. The plant uses bounded thermal-hydraulic steps and smaller kinetics substeps. Each plant step performs coupled half-steps to reduce feedback lag across neutronics, core thermal response, RCS hydraulics and the secondary plant. Fast-forward advances many stable physical steps rather than multiplying a single timestep by the speed factor.
 
-GitHub Actions runs unit tests and builds `app-release.apk`. Pull requests build and test without replacing the direct-download release; pushes to `main` also refresh the `gmee-test` release asset.
+The test suite exercises the declared reference state, rod-drive dynamics, neutronic response, SCRAM/decay heat, RCP coastdown, protection behavior, IF97 state recovery, inhour behavior, fast-forward positivity/finite-state behavior and coupled-plant sanity checks.
 
-The current IF97 implementation is the Hummeling Java library, version 2.0.0, under the GNU LGPL. See `THIRD_PARTY_NOTICES.md`.
+## Model status and limitations
 
-## Status
+Critical State is an **engineering-inspired reduced-order entertainment/education simulator**, not a qualified nuclear analysis product. A physically causal model is not the same thing as a validated plant model.
 
-Early prototype. Several constants in the neutronics, thermal, primary inventory, surge-line, and controller slices are intentionally marked estimated or calibration-required. Primary pressure is no longer a fixed display value, but the primary coolant system is still represented by a lumped thermal node plus a reduced inventory boundary rather than explicit hot/cold-leg hydraulic control volumes.
+The current implementation intentionally does **not** claim:
 
-This software is for entertainment and education. It is not qualified for reactor design, licensing analysis, operator qualification, plant prediction, accident management, or safety-limit calculations.
+- plant-specific safety limits, protection algorithms or operating procedures;
+- safety-analysis-grade accident prediction;
+- full 3-D neutron diffusion/transport or pin-by-pin depletion;
+- RELAP5/TRACE-class two-fluid system thermal hydraulics;
+- validated vendor CHF/DNBR correlations;
+- proprietary pump, turbine or steam-generator maps;
+- structural/finite-element fuel or vessel analysis;
+- prediction of a specific operating reactor.
+
+Many balance-of-plant coefficients are marked calibration-required or estimated. They are retained as physical coefficients with provenance/status rather than silently tuned gameplay values. DNBR remains intentionally absent until an applicable validated public correlation is selected.
+
+## Water and steam properties
+
+Ordinary-water/steam thermodynamics currently use `com.hummeling:if97:2.0.0`, wrapped behind the project-owned `WaterProperties` interface. This provides IAPWS-IF97 property closure without tying the plant model directly to one library API. See `THIRD_PARTY_NOTICES.md` for licensing information.
+
+## Android build
+
+- compile SDK: 35
+- minimum SDK: 23
+- target SDK: 30 for the current G-Mee compatibility envelope
+- Java: 17
+- UI: Android framework views, kept deliberately lightweight for the target phone
+
+GitHub Actions runs the unit suite, assembles a signed release APK, verifies the DEX header and uploads the APK artifact. Pull requests build/test without replacing the public test release; successful pushes to `main` refresh the fixed `gmee-test` release asset.
+
+Direct installed-build URL after a successful `main` build:
+
+`https://github.com/NyerahMT/Critical-State/releases/download/gmee-test/Critical-State-GMee-Test.apk`
+
+### Signing note
+
+The current CI workflow still creates a temporary test keystore for each build. Until a persistent secret-backed signing key is configured, a newly downloaded APK may require uninstalling the previous Critical State build before installation because Android treats different signatures as different update authorities.
+
+## Technical basis
+
+The model-theory basis draws on public references including IAPWS-IF97, U.S. DOE reactor theory and thermal-fluid handbooks, IAEA reactor-kinetics/decay-heat material, MIT BEAVRS, OECD/NEA PSBT, public NRC steam-generator assessments and standard steam-turbine / synchronous-machine relationships.
+
+Critical State is for entertainment and education. It is not qualified for reactor design or modification, licensing or regulatory analysis, operator qualification, real-plant prediction, accident-management decisions, or technical-specification calculations.
