@@ -3,6 +3,7 @@ package com.nyerahworks.criticalstate.sim
 import java.io.FileDescriptor
 import java.io.FileOutputStream
 import java.util.Locale
+import kotlin.math.abs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -125,6 +126,87 @@ class ReactorSimulatorTest {
             out.write(metrics.toByteArray(Charsets.UTF_8))
             out.flush()
         }
+    }
+
+    @Test
+    fun item2FeedwaterIntegralAndPlusMinusTenPercentLoadRecovery() {
+        // First prove the I term itself changes demand when dt is nonzero.
+        val water = If97WaterProperties()
+        val sg = SteamGeneratorModel(0, water)
+        val hotH = water.statePT(ReferencePlant.PRIMARY_PRESSURE_MPA, ReferencePlant.HOT_LEG_T_K).enthalpyKjKg
+        val fwH = water.statePT(ReferencePlant.SG_PRESSURE_MPA + 1.0, ReferencePlant.FEEDWATER_T_K).enthalpyKjKg
+        repeat(20) {
+            sg.advance(
+                primaryInletEnthalpyKjKg = hotH,
+                primaryMassFlowKgS = ReferencePlant.FLOW_PER_LOOP_KG_PER_S,
+                primaryPressureMpa = ReferencePlant.PRIMARY_PRESSURE_MPA,
+                headerPressureMpa = ReferencePlant.STEAM_HEADER_PRESSURE_MPA,
+                feedwaterFlowKgS = 0.0,
+                feedwaterEnthalpyKjKg = fwH,
+                heatExchangerCondition = 1.0,
+                dt = 0.1,
+            )
+        }
+        val disturbedLevel = sg.snapshot().levelFraction
+        val demand0 = sg.feedwaterDemand(0.0)
+        val demand1 = sg.feedwaterDemand(0.5)
+        val demand2 = sg.feedwaterDemand(0.5)
+        val errorSign = ReferencePlant.SG_REFERENCE_LEVEL - disturbedLevel
+        val integralMovesDemand = if (errorSign > 0.0) demand2 > demand1 else demand2 < demand1
+
+        data class LoadResult(
+            val load: Double,
+            val baseline: Double,
+            val peakError: Double,
+            val finalLevel: Double,
+            val finalError: Double,
+            val minLevel: Double,
+            val maxLevel: Double,
+            val tripped: Boolean,
+        )
+
+        fun runLoad(load: Double): LoadResult {
+            val simulator = ReactorSimulator()
+            val baselineState = simulator.advance(15.0, 1.0)
+            val baseline = baselineState.steamGeneratorLevelFraction.average()
+            simulator.setTurbineLoad(load)
+            val samples = mutableListOf<PlantState>()
+            repeat(12) {
+                samples += simulator.advance(10.0, 1.0)
+            }
+            val levels = samples.map { it.steamGeneratorLevelFraction.average() }
+            val errors = levels.map { abs(it - ReferencePlant.SG_REFERENCE_LEVEL) }
+            return LoadResult(
+                load = load,
+                baseline = baseline,
+                peakError = errors.maxOrNull() ?: 0.0,
+                finalLevel = levels.last(),
+                finalError = errors.last(),
+                minLevel = levels.minOrNull() ?: baseline,
+                maxLevel = levels.maxOrNull() ?: baseline,
+                tripped = samples.any { it.tripped },
+            )
+        }
+
+        val plus = runLoad(1.10)
+        val minus = runLoad(0.90)
+        val metrics = String.format(
+            Locale.US,
+            "ITEM2 Icheck level=%.5f demand0=%.3f demand1=%.3f demand2=%.3f kg/s | +10%% baseline=%.5f min=%.5f max=%.5f peakErr=%.5f final=%.5f finalErr=%.5f trip=%s | -10%% baseline=%.5f min=%.5f max=%.5f peakErr=%.5f final=%.5f finalErr=%.5f trip=%s\n",
+            disturbedLevel, demand0, demand1, demand2,
+            plus.baseline, plus.minLevel, plus.maxLevel, plus.peakError, plus.finalLevel, plus.finalError, plus.tripped,
+            minus.baseline, minus.minLevel, minus.maxLevel, minus.peakError, minus.finalLevel, minus.finalError, minus.tripped,
+        )
+        FileOutputStream(FileDescriptor.out).use { out ->
+            out.write(metrics.toByteArray(Charsets.UTF_8))
+            out.flush()
+        }
+
+        assertTrue("SG I-term did not change demand with nonzero dt", integralMovesDemand)
+        assertTrue("+10% load SG level did not turn back toward setpoint: $metrics", plus.finalError < plus.peakError)
+        assertTrue("-10% load SG level did not turn back toward setpoint: $metrics", minus.finalError < minus.peakError)
+        assertTrue("+10% load SG level left physical range: $metrics", plus.minLevel > 0.0 && plus.maxLevel < 1.0)
+        assertTrue("-10% load SG level left physical range: $metrics", minus.minLevel > 0.0 && minus.maxLevel < 1.0)
     }
 
     @Test
