@@ -24,19 +24,28 @@ class MainActivity : Activity() {
 
     private var running = true
     private var timeScale = 1.0
+    private val rcpRunning = BooleanArray(4) { true }
 
     private lateinit var statusText: TextView
     private lateinit var clockText: TextView
     private lateinit var powerText: TextView
-    private lateinit var generatorText: TextView
-    private lateinit var coolantText: TextView
+    private lateinit var coreText: TextView
+    private lateinit var rcsText: TextView
+    private lateinit var loopText: TextView
     private lateinit var pressureText: TextView
-    private lateinit var pressurizerControlText: TextView
+    private lateinit var sgText: TextView
+    private lateinit var turbineText: TextView
+    private lateinit var condenserText: TextView
     private lateinit var reactivityText: TextView
+    private lateinit var poisonText: TextView
     private lateinit var periodText: TextView
+    private lateinit var conservationText: TextView
+    private lateinit var diagnosticText: TextView
     private lateinit var rodValueText: TextView
     private lateinit var turbineValueText: TextView
     private lateinit var pauseButton: Button
+    private lateinit var breakerButton: Button
+    private val rcpButtons = mutableListOf<Button>()
 
     private val tick = object : Runnable {
         override fun run() {
@@ -70,34 +79,37 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.rgb(11, 15, 20))
             isFillViewport = true
         }
-
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(22), dp(18), dp(28))
+            setPadding(dp(14), dp(18), dp(14), dp(28))
         }
         scroll.addView(root)
 
-        root.addView(text("CRITICAL STATE", 28f, Color.rgb(236, 240, 244), true))
-
-        statusText = text("AT POWER", 17f, Color.rgb(231, 184, 75), true)
+        root.addView(text("CRITICAL STATE", 27f, Color.rgb(236, 240, 244), true))
+        root.addView(text("COUPLED FOUR-LOOP PWR • DEVELOPMENT PANEL", 10f, Color.rgb(130, 145, 158), true))
+        statusText = text("AT POWER", 16f, Color.rgb(231, 184, 75), true)
         root.addView(statusText)
-
-        clockText = mono("SIM T+00:00:00", 13f, Color.rgb(174, 187, 198))
+        clockText = mono("SIM T+00:00:00", 12f, Color.rgb(174, 187, 198))
         root.addView(clockText)
-        root.addView(space(16))
-
-        powerText = metric(root, "REACTOR POWER")
-        generatorText = metric(root, "GENERATOR")
-        coolantText = metric(root, "THERMAL")
-        pressureText = metric(root, "PRIMARY / PRESSURIZER")
-        pressurizerControlText = metric(root, "PRESSURIZER CONTROL")
-        reactivityText = metric(root, "REACTIVITY")
-        periodText = metric(root, "REACTOR PERIOD")
-
         root.addView(space(12))
-        root.addView(sectionTitle("PLANT CONTROL"))
 
-        rodValueText = mono("55.0 %", 14f, Color.WHITE)
+        powerText = metric(root, "NEUTRONICS / HEAT")
+        coreText = metric(root, "CORE THERMAL")
+        rcsText = metric(root, "REACTOR COOLANT SYSTEM")
+        loopText = metric(root, "PRIMARY LOOPS / RCP")
+        pressureText = metric(root, "PRESSURIZER")
+        sgText = metric(root, "STEAM GENERATORS")
+        turbineText = metric(root, "MAIN STEAM / TURBINE / GENERATOR")
+        condenserText = metric(root, "CONDENSER / FEEDWATER")
+        reactivityText = metric(root, "REACTIVITY")
+        poisonText = metric(root, "CHEMISTRY / POISONS")
+        periodText = metric(root, "REACTOR PERIOD")
+        conservationText = metric(root, "CONSERVATION AUDIT")
+        diagnosticText = metric(root, "PROTECTION / DIAGNOSTICS")
+
+        root.addView(space(10))
+        root.addView(sectionTitle("REACTOR CONTROL"))
+        rodValueText = mono("55.0 %", 13f, Color.WHITE)
         root.addView(controlHeader("CONTROL BANK INSERTION", rodValueText))
         root.addView(SeekBar(this).apply {
             max = 1000
@@ -105,13 +117,13 @@ class MainActivity : Activity() {
             setOnSeekBarChangeListener(simpleSeek { progress ->
                 val insertion = progress / 1000.0
                 simulator.setRodInsertion(insertion)
-                rodValueText.text = String.format(Locale.US, "%.1f %%", insertion * 100.0)
-                render(simulator.snapshot())
+                rodValueText.text = String.format(Locale.US, "CMD %.1f %%", insertion * 100.0)
             })
         })
 
-        turbineValueText = mono("100 %", 14f, Color.WHITE)
-        root.addView(controlHeader("TURBINE LOAD DEMAND", turbineValueText))
+        root.addView(sectionTitle("POWER CONVERSION"))
+        turbineValueText = mono("100 %", 13f, Color.WHITE)
+        root.addView(controlHeader("TURBINE LOAD REFERENCE", turbineValueText))
         root.addView(SeekBar(this).apply {
             max = 80
             progress = 70
@@ -119,11 +131,46 @@ class MainActivity : Activity() {
                 val load = (30 + progress) / 100.0
                 simulator.setTurbineLoad(load)
                 turbineValueText.text = String.format(Locale.US, "%.0f %%", load * 100.0)
-                render(simulator.snapshot())
             })
         })
 
-        root.addView(text("SIMULATION SPEED", 12f, Color.rgb(174, 187, 198), true))
+        root.addView(text("REACTOR COOLANT PUMPS", 11f, Color.rgb(174, 187, 198), true))
+        val rcpRow1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val rcpRow2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        repeat(4) { index ->
+            val button = button("RCP ${index + 1} ON") {
+                rcpRunning[index] = !rcpRunning[index]
+                simulator.setReactorCoolantPump(index, rcpRunning[index])
+                updateRcpButton(index)
+            }
+            rcpButtons += button
+            val target = if (index < 2) rcpRow1 else rcpRow2
+            target.addView(button, LinearLayout.LayoutParams(0, dp(48), 1f).apply {
+                setMargins(dp(3), dp(3), dp(3), dp(3))
+            })
+        }
+        root.addView(rcpRow1)
+        root.addView(rcpRow2)
+
+        breakerButton = button("GEN BREAKER CLOSED") {
+            val nowClosed = simulator.snapshot().generatorBreakerClosed
+            simulator.setGeneratorBreakerClosed(!nowClosed)
+            render(simulator.snapshot())
+        }
+        val turbineTripButton = button("TURBINE TRIP") {
+            simulator.tripTurbine()
+            render(simulator.snapshot())
+        }.apply { setTextColor(Color.rgb(255, 190, 90)) }
+        root.addView(buttonRow(breakerButton, turbineTripButton))
+
+        root.addView(text("CHEMICAL SHIM", 11f, Color.rgb(174, 187, 198), true))
+        root.addView(buttonRow(
+            button("DILUTE") { simulator.setBoronMakeup(5.0, 0.0) },
+            button("HOLD") { simulator.setBoronMakeup(0.0, 900.0) },
+            button("BORATE") { simulator.setBoronMakeup(5.0, 2000.0) },
+        ))
+
+        root.addView(text("SIMULATION SPEED", 11f, Color.rgb(174, 187, 198), true))
         root.addView(buttonRow(
             button("1×") { timeScale = 1.0 },
             button("10×") { timeScale = 10.0 },
@@ -134,97 +181,197 @@ class MainActivity : Activity() {
             running = !running
             pauseButton.text = if (running) "PAUSE" else "RUN"
         }
-        val trip = button("TRIP") {
+        val trip = button("REACTOR TRIP") {
             simulator.trip()
             render(simulator.snapshot())
         }.apply { setTextColor(Color.rgb(255, 122, 112)) }
-        val reset = button("RESET") {
+        val reset = button("RESET PLANT") {
             simulator.reset()
             running = true
+            timeScale = 1.0
+            for (i in rcpRunning.indices) {
+                rcpRunning[i] = true
+                updateRcpButton(i)
+            }
             pauseButton.text = "PAUSE"
             render(simulator.snapshot())
         }
         root.addView(buttonRow(pauseButton, trip, reset))
 
-        root.addView(space(16))
-        root.addView(sectionTitle("MODEL STATUS"))
-        root.addView(text("Neutronics  •  six-group point kinetics", 13f, Color.rgb(232, 237, 242), false))
-        root.addView(text("Rod worth    •  S-curve fallback / calibration required", 13f, Color.rgb(174, 187, 198), false))
-        root.addView(text("Thermal      •  lumped fuel/coolant energy balance", 13f, Color.rgb(174, 187, 198), false))
-        root.addView(text("Pressure     •  mass/energy pressurizer + IAPWS-IF97 properties", 13f, Color.rgb(174, 187, 198), false))
-        root.addView(text("RCS surge    •  reduced thermal-expansion boundary / calibration required", 13f, Color.rgb(174, 187, 198), false))
-
-        root.addView(space(18))
+        root.addView(space(14))
+        root.addView(sectionTitle("MODEL BASIS"))
+        root.addView(text("Six-group kinetics • I/Xe + Pm/Sm • 11-group decay heat", 12f, Color.rgb(174, 187, 198), false))
+        root.addView(text("6 axial core nodes • radial fuel/clad storage • IF97 coolant", 12f, Color.rgb(174, 187, 198), false))
+        root.addView(text("4 dynamic RCS loops • RCP inertia • natural circulation • pressurizer", 12f, Color.rgb(174, 187, 198), false))
+        root.addView(text("4 dynamic SGs • steam header • turbine/grid • condenser/feedwater", 12f, Color.rgb(174, 187, 198), false))
+        root.addView(text("Dynamic instruments • generic protection voting • conservation ledger", 12f, Color.rgb(174, 187, 198), false))
+        root.addView(space(12))
         root.addView(text(
             "GENERIC REDUCED-ORDER PWR • ENTERTAINMENT / EDUCATION • NOT OPERATOR TRAINING",
-            10f,
+            9f,
             Color.rgb(130, 145, 158),
             false,
         ))
-
         return scroll
     }
 
-    private fun render(state: PlantState) {
+    private fun render(s: PlantState) {
         statusText.text = when {
-            state.tripped -> "REACTOR TRIP"
-            state.fissionPowerMw < ReactorSimulator.REFERENCE_THERMAL_POWER_MW * 0.02 -> "SUBCRITICAL / LOW POWER"
+            s.tripped -> "REACTOR TRIP"
+            s.generatorBreakerClosed.not() -> "GENERATOR OFF GRID"
+            s.fissionPowerMw < ReactorSimulator.REFERENCE_THERMAL_POWER_MW * 0.02 -> "SUBCRITICAL / LOW POWER"
             else -> "AT POWER"
         }
-        statusText.setTextColor(if (state.tripped) Color.rgb(255, 122, 112) else Color.rgb(231, 184, 75))
-        clockText.text = "SIM T+${formatDuration(state.simulationSeconds)}"
+        statusText.setTextColor(if (s.tripped) Color.rgb(255, 122, 112) else Color.rgb(231, 184, 75))
+        clockText.text = "SIM T+${formatDuration(s.simulationSeconds)}"
 
         powerText.text = String.format(
             Locale.US,
-            "%.1f %%   •   %.0f MWth",
-            state.fissionPowerMw / ReactorSimulator.REFERENCE_THERMAL_POWER_MW * 100.0,
-            state.fissionPowerMw,
+            "Fission  %6.1f %%  %7.0f MW\nCore heat %7.0f MW   Decay %6.1f MW",
+            s.fissionPowerMw / ReactorSimulator.REFERENCE_THERMAL_POWER_MW * 100.0,
+            s.fissionPowerMw,
+            s.totalCoreHeatMw,
+            s.decayHeatMw,
         )
-        generatorText.text = String.format(Locale.US, "%.0f MW   •   load %.0f %%", state.generatorPowerMw, state.turbineLoad * 100.0)
-        coolantText.text = String.format(Locale.US, "Coolant %.1f K   •   Fuel %.0f K", state.coolantTemperatureK, state.fuelTemperatureK)
+        coreText.text = String.format(
+            Locale.US,
+            "Fuel avg/peak  %.0f / %.0f K\nClad avg/peak  %.0f / %.0f K\nSubcooling     %.1f K",
+            s.fuelTemperatureK,
+            s.fuelPeakTemperatureK,
+            s.cladTemperatureK,
+            s.cladPeakTemperatureK,
+            s.subcoolingMarginK,
+        )
+        rcsText.text = String.format(
+            Locale.US,
+            "P %.3f MPa   Flow %.0f kg/s\nT cold/hot %.1f / %.1f K",
+            s.primaryPressureMpa,
+            s.totalPrimaryFlowKgPerS,
+            s.coldLegTemperatureK,
+            s.hotLegTemperatureK,
+        )
+        loopText.text = buildString {
+            s.loopFlowKgPerS.indices.forEach { i ->
+                append(String.format(Locale.US, "L%d %6.0f kg/s  %4.0f rpm", i + 1, s.loopFlowKgPerS[i], s.loopPumpRpm.getOrElse(i) { 0.0 }))
+                if (i != s.loopFlowKgPerS.lastIndex) append('\n')
+            }
+        }
         pressureText.text = String.format(
             Locale.US,
-            "%.3f MPa   •   level %.1f %%   •   Tsat %.1f °C",
-            state.primaryPressureMpa,
-            state.pressurizerLevelFraction * 100.0,
-            state.pressurizerTemperatureK - 273.15,
+            "Level %.1f %%   Tsat %.1f °C\nHeat %.0f %%  Spray %.0f %%\nSurge %+.1f  Spray %.1f  Relief %.1f kg/s",
+            s.pressurizerLevelFraction * 100.0,
+            s.pressurizerTemperatureK - 273.15,
+            s.pressurizerHeaterFraction * 100.0,
+            s.pressurizerSprayFraction * 100.0,
+            s.pressurizerSurgeKgPerS,
+            s.pressurizerSprayKgPerS,
+            s.pressurizerReliefKgPerS,
         )
-        pressurizerControlText.text = String.format(
+        sgText.text = buildString {
+            s.steamGeneratorPressureMpa.indices.forEach { i ->
+                append(String.format(
+                    Locale.US,
+                    "SG%d %.2f MPa  L %.1f %%  steam %.0f kg/s",
+                    i + 1,
+                    s.steamGeneratorPressureMpa[i],
+                    s.steamGeneratorLevelFraction.getOrElse(i) { 0.0 } * 100.0,
+                    s.steamGeneratorSteamFlowKgPerS.getOrElse(i) { 0.0 },
+                ))
+                if (i != s.steamGeneratorPressureMpa.lastIndex) append('\n')
+            }
+        }
+        turbineText.text = String.format(
             Locale.US,
-            "HEAT %.0f %%   •   SPRAY %.0f %%   •   SURGE %+.1f kg/s",
-            state.pressurizerHeaterFraction * 100.0,
-            state.pressurizerSprayFraction * 100.0,
-            state.pressurizerSurgeKgPerS,
+            "Header %.2f MPa   Steam %.0f kg/s\nTurbine %.0f rpm   Valve %.0f %%\nGross %.0f MW   Net %.0f MW   Q %+.0f Mvar\nBreaker %s",
+            s.mainSteamPressureMpa,
+            s.turbineSteamFlowKgPerS,
+            s.turbineRpm,
+            s.turbineValvePosition * 100.0,
+            s.generatorGrossPowerMw,
+            s.generatorPowerMw,
+            s.generatorReactivePowerMvar,
+            if (s.generatorBreakerClosed) "CLOSED" else "OPEN",
         )
-        reactivityText.text = String.format(Locale.US, "%+.1f pcm", state.totalReactivityPcm)
-        periodText.text = state.reactorPeriodSeconds?.let {
-            if (abs(it) > 9999.0) "> 9999 s" else String.format(Locale.US, "%+.1f s", it)
+        condenserText.text = String.format(
+            Locale.US,
+            "Condenser %.2f kPa   reject %.0f MW\nFeedwater %.0f kg/s   %.1f K\nAuxiliary %.1f MW",
+            s.condenserPressureKpa,
+            s.condenserHeatRejectionMw,
+            s.feedwaterFlowKgPerS,
+            s.feedwaterTemperatureK,
+            s.auxiliaryPowerMw,
+        )
+        reactivityText.text = String.format(
+            Locale.US,
+            "Total %+.1f pcm\nRod %+.1f  Doppler %+.1f  Mod %+.1f\nBoron %+.1f  Xe %+.1f  Sm %+.1f pcm",
+            s.totalReactivityPcm,
+            s.rodReactivityPcm,
+            s.dopplerReactivityPcm,
+            s.moderatorReactivityPcm,
+            s.boronReactivityPcm,
+            s.xenonReactivityPcm,
+            s.samariumReactivityPcm,
+        )
+        poisonText.text = String.format(
+            Locale.US,
+            "Boron %.1f ppm   Burnup %.3f MWd/t\nI %.3f  Xe %.3f  Pm %.3f  Sm %.3f",
+            s.boronPpm,
+            s.burnupMwdPerT,
+            s.iodineInventory,
+            s.xenonInventory,
+            s.promethiumInventory,
+            s.samariumInventory,
+        )
+        periodText.text = s.reactorPeriodSeconds?.let {
+            if (abs(it) > 9999.0) "> 9999 s" else String.format(Locale.US, "%+.2f s", it)
         } ?: "STABLE"
-        rodValueText.text = String.format(Locale.US, "%.1f %%", state.rodInsertion * 100.0)
-        turbineValueText.text = String.format(Locale.US, "%.0f %%", state.turbineLoad * 100.0)
+        conservationText.text = String.format(
+            Locale.US,
+            "RCS inventory residual %+.1f kg\nPlant mass residual   %+.1f kg\nEnergy residual       %+.1f MJ  (%+.2f MW drift)",
+            s.primaryMassResidualKg,
+            s.massConservationErrorKg,
+            s.energyConservationErrorMj,
+            s.plantEnergyResidualMw,
+        )
+        diagnosticText.text = when {
+            s.tripReasons.isNotEmpty() -> "TRIP: ${s.tripReasons.joinToString(", ")}" +
+                (s.diagnostic?.let { "\n$it" } ?: "")
+            s.diagnostic != null -> s.diagnostic
+            else -> "No active model diagnostic"
+        }
+
+        rodValueText.text = String.format(Locale.US, "ACT %.1f %% / CMD %.1f %%", s.rodInsertion * 100.0, s.rodCommandInsertion * 100.0)
+        turbineValueText.text = String.format(Locale.US, "%.0f %%", s.turbineLoad * 100.0)
+        breakerButton.text = if (s.generatorBreakerClosed) "GEN BREAKER CLOSED" else "GEN BREAKER OPEN"
+    }
+
+    private fun updateRcpButton(index: Int) {
+        if (index !in rcpButtons.indices) return
+        rcpButtons[index].text = "RCP ${index + 1} ${if (rcpRunning[index]) "ON" else "OFF"}"
     }
 
     private fun metric(parent: LinearLayout, label: String): TextView {
-        parent.addView(text(label, 11f, Color.rgb(156, 177, 194), true))
-        return mono("—", 19f, Color.rgb(232, 237, 242)).also {
-            it.setPadding(0, 0, 0, dp(12))
+        parent.addView(text(label, 10f, Color.rgb(156, 177, 194), true))
+        return mono("—", 15f, Color.rgb(232, 237, 242)).also {
+            it.setPadding(0, 0, 0, dp(10))
             parent.addView(it)
         }
     }
 
-    private fun sectionTitle(value: String) = text(value, 15f, Color.rgb(231, 184, 75), true).apply {
-        setPadding(0, dp(6), 0, dp(8))
+    private fun sectionTitle(value: String) = text(value, 14f, Color.rgb(231, 184, 75), true).apply {
+        setPadding(0, dp(6), 0, dp(6))
     }
 
     private fun controlHeader(label: String, value: TextView): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        addView(text(label, 12f, Color.rgb(174, 187, 198), true), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        addView(text(label, 11f, Color.rgb(174, 187, 198), true), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         addView(value)
     }
 
     private fun button(label: String, action: () -> Unit) = Button(this).apply {
         text = label
+        textSize = 11f
         isAllCaps = false
         setOnClickListener { action() }
     }
@@ -233,8 +380,8 @@ class MainActivity : Activity() {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER
         buttons.forEach { button ->
-            addView(button, LinearLayout.LayoutParams(0, dp(52), 1f).apply {
-                setMargins(dp(3), dp(6), dp(3), dp(6))
+            addView(button, LinearLayout.LayoutParams(0, dp(48), 1f).apply {
+                setMargins(dp(3), dp(4), dp(3), dp(4))
             })
         }
     }
@@ -266,9 +413,14 @@ class MainActivity : Activity() {
 
     private fun formatDuration(seconds: Double): String {
         val total = seconds.toLong().coerceAtLeast(0)
-        val hours = total / 3600
+        val days = total / 86400
+        val hours = (total % 86400) / 3600
         val minutes = (total % 3600) / 60
         val secs = total % 60
-        return String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, secs)
+        return if (days > 0) {
+            String.format(Locale.US, "%dd %02d:%02d:%02d", days, hours, minutes, secs)
+        } else {
+            String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, secs)
+        }
     }
 }
