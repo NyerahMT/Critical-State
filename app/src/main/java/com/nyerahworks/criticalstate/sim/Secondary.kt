@@ -200,9 +200,13 @@ internal class SteamGeneratorModel(
     fun feedwaterDemand(dt: Double): Double {
         val level = geometricLevel()
         val error = ReferencePlant.SG_REFERENCE_LEVEL - level
-        feedwaterIntegral = (feedwaterIntegral + error * dt).coerceIn(-0.25, 0.25)
-        val kp = 2.2 * referenceSteamFlowKgS
-        val ki = 0.12 * referenceSteamFlowKgS
+        // Steam-flow feed-forward carries the steady load.  Keep the integral
+        // deliberately small so it removes persistent inventory bias without
+        // storing enough action to drive a slow level overshoot after the error
+        // changes sign.  The proportional term does the transient correction.
+        feedwaterIntegral = (feedwaterIntegral + error * dt).coerceIn(-0.10, 0.10)
+        val kp = 4.0 * referenceSteamFlowKgS
+        val ki = 0.025 * referenceSteamFlowKgS
         return (lastSteamFlow + kp * error + ki * feedwaterIntegral)
             .coerceIn(0.20 * referenceSteamFlowKgS, 1.35 * referenceSteamFlowKgS)
     }
