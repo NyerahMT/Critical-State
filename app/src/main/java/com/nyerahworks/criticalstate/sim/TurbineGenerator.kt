@@ -296,10 +296,14 @@ internal class TurbineGeneratorModel(
             condensateEnthalpy = condenserH,
             mechanicalEfficiency = 1.0,
         )
+        // HP/LP isentropic efficiencies already account for internal turbine
+        // losses. This final factor is a calibrated shaft/mechanical efficiency,
+        // so allow a physically valid value up to unity. The previous 0.98 cap
+        // forced the declared design point to settle about 17 MW below rated.
         calibratedMechanicalEfficiency = (
             ReferencePlant.RATED_GROSS_ELECTRIC_MW /
                 max(raw.mechanicalPowerMw * GENERATOR_EFFICIENCY, 1.0)
-            ).coerceIn(0.45, 0.98)
+            ).coerceIn(0.45, 1.0)
         lastSnapshot = buildInitialSnapshot()
     }
 
