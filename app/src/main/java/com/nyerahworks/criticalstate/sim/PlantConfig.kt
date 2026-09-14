@@ -103,8 +103,12 @@ internal object ReferencePlant {
     const val BORON_WORTH_PER_PPM = -7.0e-5
     const val HEAVY_METAL_MASS_TONNES = 100.0
 
-    // Numerical hierarchy.
-    const val MAX_THERMAL_HYDRAULIC_STEP_S = 0.10
+    // Numerical hierarchy. ReactorSimulator performs two coupled half-steps for
+    // each plant step. Normal 1x runtime publishes 0.10 s batches, preserving
+    // the original 0.05 s coupled half-step. Accelerated operation may batch to
+    // 0.15 s (0.075 s half-steps), a conservative 50% increase that reduces
+    // solve count without leaving the stable IF97/thermal-hydraulic envelope.
+    const val MAX_THERMAL_HYDRAULIC_STEP_S = 0.15
     const val MIN_NEUTRON_POPULATION = 1.0e-15
 
     val provenance: Map<String, ParameterProvenance> = mapOf(
