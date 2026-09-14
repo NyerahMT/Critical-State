@@ -14,7 +14,9 @@ The status header exposes requested time scale, effective measured time scale an
 
 The IF97 adapter now uses direct-mapped exact-value caches for PT, PH, saturation and PS evaluations. Inputs are never rounded or interpolated. Cache hits require exact `Double` bit patterns, so the optimization removes duplicate property calls without changing the thermodynamic state passed to the plant model.
 
-The normal 1x runtime remains at 0.05 s coupled half-steps. Accelerated batches may use thermal-hydraulic plant steps up to 0.25 s; the orchestrator still performs two coupled half-steps and point kinetics keeps its own 0.01 s substep. This is intended to make 10x/60x usable on low-end hardware while retaining a bounded integration hierarchy.
+Fixed-volume two-phase and single-phase closures now warm-start from the previous pressure, search locally before falling back to their full pressure range, and stop once a tight physical residual is reached instead of driving every closure to machine precision. The closure equations themselves are unchanged.
+
+The normal 1x runtime remains at 0.05 s coupled half-steps. Accelerated batches may use thermal-hydraulic plant steps up to 0.15 s; the orchestrator still performs two coupled half-steps and point kinetics keeps its own 0.01 s substep. This reduces accelerated solve count while staying inside the transient-stability envelope exercised by the physics test suite.
 
 ## Fixed-screen HMI
 
