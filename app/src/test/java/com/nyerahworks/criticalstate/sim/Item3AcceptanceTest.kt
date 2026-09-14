@@ -3,7 +3,6 @@ package com.nyerahworks.criticalstate.sim
 import java.io.FileDescriptor
 import java.io.FileOutputStream
 import java.util.Locale
-import kotlin.math.abs
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -49,12 +48,22 @@ class Item3AcceptanceTest {
             val sg = s.steamGeneratorLevelFraction.average()
             trace.append(String.format(
                 Locale.US,
-                "ITEM3 t=%3ds P=%.5f MPa Tavg=%.3f K SG=%.5f net=%.3f MWe trip=%s breaker=%s massRes=%.3f kg energyRes=%.3f MJ\n",
+                "ITEM3 t=%3ds P=%.5f Tavg=%.3f Th=%.3f Tc=%.3f SG=%.5f net=%.3f gross=%.3f aux=%.3f flow=%.1f core=%.1f SGQ=%.1f header=%.4f fw=%.1f@%.2f trip=%s breaker=%s massRes=%.3f energyRes=%.3f\n",
                 t,
                 s.primaryPressureMpa,
                 tavg,
+                s.hotLegTemperatureK,
+                s.coldLegTemperatureK,
                 sg,
                 s.generatorPowerMw,
+                s.generatorGrossPowerMw,
+                s.auxiliaryPowerMw,
+                s.totalPrimaryFlowKgPerS,
+                s.totalCoreHeatMw,
+                s.secondaryHeatRemovalMw,
+                s.mainSteamPressureMpa,
+                s.feedwaterFlowKgPerS,
+                s.feedwaterTemperatureK,
                 s.tripped,
                 s.generatorBreakerClosed,
                 s.massConservationErrorKg,
@@ -63,14 +72,12 @@ class Item3AcceptanceTest {
         }
 
         appendTrace(0, initial)
-
         var finalState = initial
         for (t in 1..600) {
             finalState = simulator.advance(1.0, 1.0)
             val tavg = 0.5 * (finalState.hotLegTemperatureK + finalState.coldLegTemperatureK)
             val sg = finalState.steamGeneratorLevelFraction.average()
             val mwe = finalState.generatorPowerMw
-
             minP = minOf(minP, finalState.primaryPressureMpa)
             maxP = maxOf(maxP, finalState.primaryPressureMpa)
             minTavg = minOf(minTavg, tavg)
@@ -81,7 +88,6 @@ class Item3AcceptanceTest {
             maxMwe = maxOf(maxMwe, mwe)
             anyTrip = anyTrip || finalState.tripped
             breakerOpened = breakerOpened || !finalState.generatorBreakerClosed
-
             if (t % 30 == 0 || t == 1) appendTrace(t, finalState)
         }
 
@@ -90,26 +96,10 @@ class Item3AcceptanceTest {
         val summary = String.format(
             Locale.US,
             "ITEM3-SUMMARY t0 P=%.5f Tavg=%.3f SG=%.5f net=%.3f | t600 P=%.5f Tavg=%.3f SG=%.5f net=%.3f | ranges P=[%.5f,%.5f] Tavg=[%.3f,%.3f] SG=[%.5f,%.5f] net=[%.3f,%.3f] trip=%s breakerOpened=%s massRes=%.3f kg energyRes=%.3f MJ\n",
-            initial.primaryPressureMpa,
-            initialTavg,
-            initialSgLevel,
-            initialNetMwe,
-            finalState.primaryPressureMpa,
-            finalTavg,
-            finalSg,
-            finalState.generatorPowerMw,
-            minP,
-            maxP,
-            minTavg,
-            maxTavg,
-            minSg,
-            maxSg,
-            minMwe,
-            maxMwe,
-            anyTrip,
-            breakerOpened,
-            finalState.massConservationErrorKg,
-            finalState.energyConservationErrorMj,
+            initial.primaryPressureMpa, initialTavg, initialSgLevel, initialNetMwe,
+            finalState.primaryPressureMpa, finalTavg, finalSg, finalState.generatorPowerMw,
+            minP, maxP, minTavg, maxTavg, minSg, maxSg, minMwe, maxMwe,
+            anyTrip, breakerOpened, finalState.massConservationErrorKg, finalState.energyConservationErrorMj,
         )
         rawLog(trace.toString() + summary)
 
