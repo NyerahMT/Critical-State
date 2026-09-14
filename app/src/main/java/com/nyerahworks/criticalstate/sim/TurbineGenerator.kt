@@ -114,25 +114,47 @@ internal class FeedwaterTrainModel(
         pumpCondition: Double,
         dt: Double,
     ): FeedwaterSnapshot {
-        for (i in valvePositions.indices) {
-            val demand = sgDemandsKgS.getOrElse(i) { ratedPerSgFlow }
-            val target = (REFERENCE_VALVE * demand / ratedPerSgFlow).coerceIn(0.03, 1.0)
-            val delta = (target - valvePositions[i]).coerceIn(-VALVE_RATE_PER_S * dt, VALVE_RATE_PER_S * dt)
-            valvePositions[i] = (valvePositions[i] + delta).coerceIn(0.03, 1.0)
-        }
-
         val avgSgP = if (sgPressuresMpa.isNotEmpty()) sgPressuresMpa.average() else ReferencePlant.SG_PRESSURE_MPA
         val mixH = mixtureEnthalpy(condenserLiquidEnthalpyKjKg)
         val mixState = runCatching { water.statePH(avgSgP + 1.0, mixH) }.getOrElse { refFeedState }
         val rho = mixState.densityKgM3
         val pumpState = pump.advance(totalFlow, rho, pumpCondition, dt)
         val staticPressure = max(0.0, avgSgP - condenserPressureMpa) * 1e6
-        val avgValve = max(0.03, valvePositions.average())
-
-        // Implicit solution of the same pump-head/system-loss inertia equation.
-        // Both pump curve and valve loss are quadratic in mass flow; evaluating
-        // resistance at m_dot(n+1) prevents numerical 0↔rated flow chatter.
         val speedRatio = (pumpState.rpm / RATED_RPM).coerceAtLeast(0.0)
+
+        // Convert the SG controllers' requested mass flows into valve positions
+        // by inverting the same pump-curve + quadratic valve-loss relationship
+        // that the forward hydraulic solve uses. A linear demand->opening proxy
+        // could not compensate for the large static SG pressure head and left
+        // actual flow high after a load increase even while demand was falling.
+        val requestedTotal = sgDemandsKgS.sum()
+            .coerceIn(0.20 * ratedTotalFlow, 1.35 * ratedTotalFlow)
+        val requestedQ = requestedTotal / max(rho, 1.0)
+        val equivalentQ = if (speedRatio > 1.0e-6) requestedQ / speedRatio else requestedQ
+        val requestedPumpHeadM = max(
+            0.0,
+            speedRatio * speedRatio *
+                (SHUTOFF_HEAD_M - pumpHeadK * equivalentQ * equivalentQ) *
+                (0.92 + 0.08 * pumpCondition),
+        )
+        val availableValvePa = max(
+            1.0,
+            rho * 9.80665 * requestedPumpHeadM - staticPressure,
+        )
+        val targetAverageValve = sqrt(
+            baseValveK * 0.5 * requestedTotal * requestedTotal /
+                max(rho * area * area * availableValvePa, 1.0),
+        ).coerceIn(0.03, 1.0)
+        val averageDemand = max(requestedTotal / ReferencePlant.LOOP_COUNT, 1.0e-9)
+        for (i in valvePositions.indices) {
+            val demand = sgDemandsKgS.getOrElse(i) { averageDemand }.coerceAtLeast(0.0)
+            val distributionScale = sqrt(demand / averageDemand).coerceIn(0.5, 1.5)
+            val target = (targetAverageValve * distributionScale).coerceIn(0.03, 1.0)
+            val delta = (target - valvePositions[i]).coerceIn(-VALVE_RATE_PER_S * dt, VALVE_RATE_PER_S * dt)
+            valvePositions[i] = (valvePositions[i] + delta).coerceIn(0.03, 1.0)
+        }
+
+        val avgValve = max(0.03, valvePositions.average())
         val pumpShutoffPa = rho * 9.80665 * SHUTOFF_HEAD_M * speedRatio * speedRatio
         val drivePa = pumpShutoffPa - staticPressure
         val pumpResistancePaPerKgS2 = 9.80665 * pumpHeadK / max(rho, 1.0)
@@ -336,10 +358,6 @@ internal class TurbineGeneratorModel(
         val speedError = if (breakerClosed) 0.0 else
             (ReferencePlant.SYNCHRONOUS_RPM - freeRotorRpm) / ReferencePlant.SYNCHRONOUS_RPM
         val valveCommand = if (turbineTrip) 0.0 else {
-            // The load reference supplies the steady valve feed-forward; the
-            // small PI term trims thermodynamic deviations.  The old high-gain
-            // pure MW-error loop drove the swing equation through loss of sync
-            // on an otherwise ordinary ±10% load step.
             (REFERENCE_VALVE * loadCommand +
                 0.02 * errorPu +
                 0.005 * governorIntegral +
