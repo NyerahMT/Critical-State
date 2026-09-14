@@ -1,6 +1,8 @@
 package com.nyerahworks.criticalstate.sim
 
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 
 internal data class TwoPhaseEquilibrium(
     val pressureMpa: Double,
@@ -13,13 +15,31 @@ internal data class TwoPhaseEquilibrium(
     val residualKjKg: Double,
 )
 
-/** Fixed-volume saturated mixture closure from total mass and total U. */
+/**
+ * Fixed-volume saturated mixture closure from total mass and total U.
+ *
+ * The original prototype bisected the complete pressure range for 54 iterations
+ * every call. That drove IF97 to essentially machine precision even though the
+ * surrounding reduced-order model only diagnoses closure errors above fractions
+ * of a kJ/kg. This solver keeps the exact same closure equation, but warm-starts
+ * from the previous pressure, searches a local bracket first, exits on a tight
+ * physical residual and falls back to the full range when a transient moves the
+ * solution outside the local neighborhood.
+ */
 internal class TwoPhaseVolumeSolver(
     private val water: WaterProperties,
     private val volumeM3: Double,
     private val minPressureMpa: Double,
     private val maxPressureMpa: Double,
 ) {
+    companion object {
+        private const val ENERGY_TOLERANCE_KJ_KG = 0.001
+        private const val LOCAL_INITIAL_SPAN_MPA = 0.04
+        private const val MAX_BISECTION_ITERATIONS = 24
+    }
+
+    private var lastPressureMpa = 0.5 * (minPressureMpa + maxPressureMpa)
+
     fun solve(massKg: Double, internalEnergyKj: Double): TwoPhaseEquilibrium {
         require(massKg > 0.0)
         val targetV = volumeM3 / massKg
@@ -47,16 +67,45 @@ internal class TwoPhaseVolumeSolver(
             )
         }
 
-        var lo = minPressureMpa
-        var hi = maxPressureMpa
+        val warmPressure = lastPressureMpa.coerceIn(minPressureMpa, maxPressureMpa)
+        val warm = eval(warmPressure)
+        if (abs(warm.residualKjKg) <= ENERGY_TOLERANCE_KJ_KG) return warm
+
+        var span = LOCAL_INITIAL_SPAN_MPA
+        var lo = max(minPressureMpa, warmPressure - span)
+        var hi = min(maxPressureMpa, warmPressure + span)
         var a = eval(lo)
         var b = eval(hi)
-        if (a.residualKjKg * b.residualKjKg > 0.0) {
-            return if (abs(a.residualKjKg) < abs(b.residualKjKg)) a else b
+        repeat(6) {
+            if (a.residualKjKg * b.residualKjKg <= 0.0) return@repeat
+            span *= 2.0
+            lo = max(minPressureMpa, warmPressure - span)
+            hi = min(maxPressureMpa, warmPressure + span)
+            a = eval(lo)
+            b = eval(hi)
         }
-        repeat(54) {
+
+        if (a.residualKjKg * b.residualKjKg > 0.0) {
+            lo = minPressureMpa
+            hi = maxPressureMpa
+            a = eval(lo)
+            b = eval(hi)
+        }
+        if (a.residualKjKg * b.residualKjKg > 0.0) {
+            val best = listOf(warm, a, b).minByOrNull { abs(it.residualKjKg) } ?: warm
+            lastPressureMpa = best.pressureMpa
+            return best
+        }
+
+        var best = if (abs(a.residualKjKg) < abs(b.residualKjKg)) a else b
+        repeat(MAX_BISECTION_ITERATIONS) {
             val mid = 0.5 * (lo + hi)
             val m = eval(mid)
+            if (abs(m.residualKjKg) < abs(best.residualKjKg)) best = m
+            if (abs(m.residualKjKg) <= ENERGY_TOLERANCE_KJ_KG) {
+                lastPressureMpa = m.pressureMpa
+                return m
+            }
             if (a.residualKjKg * m.residualKjKg <= 0.0) {
                 hi = mid
                 b = m
@@ -65,7 +114,8 @@ internal class TwoPhaseVolumeSolver(
                 a = m
             }
         }
-        return if (abs(a.residualKjKg) < abs(b.residualKjKg)) a else b
+        lastPressureMpa = best.pressureMpa
+        return best
     }
 }
 
@@ -85,6 +135,13 @@ internal class SinglePhaseVolumeSolver(
     private val minPressureMpa: Double,
     private val maxPressureMpa: Double,
 ) {
+    companion object {
+        private const val VOLUME_TOLERANCE_M3_KG = 1.0e-9
+        private const val MAX_BISECTION_ITERATIONS = 24
+    }
+
+    private var lastPressureMpa = 0.5 * (minPressureMpa + maxPressureMpa)
+
     fun solve(massKg: Double, internalEnergyKj: Double): SinglePhaseVolumeState {
         require(massKg > 0.0)
         val vTarget = volumeM3 / massKg
@@ -100,16 +157,45 @@ internal class SinglePhaseVolumeSolver(
             )
         }
 
-        var lo = minPressureMpa
-        var hi = maxPressureMpa
+        val warmPressure = lastPressureMpa.coerceIn(minPressureMpa, maxPressureMpa)
+        val warm = eval(warmPressure)
+        if (abs(warm.residualM3Kg) <= VOLUME_TOLERANCE_M3_KG) return warm
+
+        var span = max(0.002, (maxPressureMpa - minPressureMpa) * 0.01)
+        var lo = max(minPressureMpa, warmPressure - span)
+        var hi = min(maxPressureMpa, warmPressure + span)
         var a = eval(lo)
         var b = eval(hi)
-        if (a.residualM3Kg * b.residualM3Kg > 0.0) {
-            return if (abs(a.residualM3Kg) < abs(b.residualM3Kg)) a else b
+        repeat(6) {
+            if (a.residualM3Kg * b.residualM3Kg <= 0.0) return@repeat
+            span *= 2.0
+            lo = max(minPressureMpa, warmPressure - span)
+            hi = min(maxPressureMpa, warmPressure + span)
+            a = eval(lo)
+            b = eval(hi)
         }
-        repeat(50) {
+
+        if (a.residualM3Kg * b.residualM3Kg > 0.0) {
+            lo = minPressureMpa
+            hi = maxPressureMpa
+            a = eval(lo)
+            b = eval(hi)
+        }
+        if (a.residualM3Kg * b.residualM3Kg > 0.0) {
+            val best = listOf(warm, a, b).minByOrNull { abs(it.residualM3Kg) } ?: warm
+            lastPressureMpa = best.pressureMpa
+            return best
+        }
+
+        var best = if (abs(a.residualM3Kg) < abs(b.residualM3Kg)) a else b
+        repeat(MAX_BISECTION_ITERATIONS) {
             val mid = 0.5 * (lo + hi)
             val m = eval(mid)
+            if (abs(m.residualM3Kg) < abs(best.residualM3Kg)) best = m
+            if (abs(m.residualM3Kg) <= VOLUME_TOLERANCE_M3_KG) {
+                lastPressureMpa = m.pressureMpa
+                return m
+            }
             if (a.residualM3Kg * m.residualM3Kg <= 0.0) {
                 hi = mid
                 b = m
@@ -118,6 +204,7 @@ internal class SinglePhaseVolumeSolver(
                 a = m
             }
         }
-        return if (abs(a.residualM3Kg) < abs(b.residualM3Kg)) a else b
+        lastPressureMpa = best.pressureMpa
+        return best
     }
 }
