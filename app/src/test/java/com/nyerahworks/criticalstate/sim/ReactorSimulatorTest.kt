@@ -10,6 +10,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReactorSimulatorTest {
+    private fun rawLog(text: String) {
+        val out = FileOutputStream(FileDescriptor.out)
+        out.write(text.toByteArray(Charsets.UTF_8))
+        out.flush()
+        // Do not close FileDescriptor.out; later tests still need the process stdout.
+    }
+
     @Test
     fun referencePlantStartsAtDeclaredDesignPoint() {
         val simulator = ReactorSimulator()
@@ -122,10 +129,7 @@ class ReactorSimulatorTest {
                 ))
             }
         }
-        FileOutputStream(FileDescriptor.out).use { out ->
-            out.write(metrics.toByteArray(Charsets.UTF_8))
-            out.flush()
-        }
+        rawLog(metrics)
     }
 
     @Test
@@ -163,6 +167,7 @@ class ReactorSimulatorTest {
             val minLevel: Double,
             val maxLevel: Double,
             val tripped: Boolean,
+            val trace: String,
         )
 
         fun runLoad(load: Double): LoadResult {
@@ -171,8 +176,26 @@ class ReactorSimulatorTest {
             val baseline = baselineState.steamGeneratorLevelFraction.average()
             simulator.setTurbineLoad(load)
             val samples = mutableListOf<PlantState>()
-            repeat(12) {
-                samples += simulator.advance(10.0, 1.0)
+            val trace = buildString {
+                repeat(12) { index ->
+                    val s = simulator.advance(10.0, 1.0)
+                    samples += s
+                    append(String.format(
+                        Locale.US,
+                        "ITEM2 load=%.2f t=%3ds level=%.5f steam=%.2f fw=%.2f P=%.4f Tavg=%.2f Pfis=%.1f MWe=%.1f trip=%s reasons=%s\n",
+                        load,
+                        (index + 1) * 10,
+                        s.steamGeneratorLevelFraction.average(),
+                        s.steamGeneratorSteamFlowKgPerS.sum(),
+                        s.steamGeneratorFeedwaterFlowKgPerS.sum(),
+                        s.primaryPressureMpa,
+                        0.5 * (s.hotLegTemperatureK + s.coldLegTemperatureK),
+                        s.fissionPowerMw,
+                        s.generatorGrossPowerMw,
+                        s.tripped,
+                        s.tripReasons.joinToString("+"),
+                    ))
+                }
             }
             val levels = samples.map { it.steamGeneratorLevelFraction.average() }
             val errors = levels.map { abs(it - ReferencePlant.SG_REFERENCE_LEVEL) }
@@ -185,6 +208,7 @@ class ReactorSimulatorTest {
                 minLevel = levels.minOrNull() ?: baseline,
                 maxLevel = levels.maxOrNull() ?: baseline,
                 tripped = samples.any { it.tripped },
+                trace = trace,
             )
         }
 
@@ -197,10 +221,7 @@ class ReactorSimulatorTest {
             plus.baseline, plus.minLevel, plus.maxLevel, plus.peakError, plus.finalLevel, plus.finalError, plus.tripped,
             minus.baseline, minus.minLevel, minus.maxLevel, minus.peakError, minus.finalLevel, minus.finalError, minus.tripped,
         )
-        FileOutputStream(FileDescriptor.out).use { out ->
-            out.write(metrics.toByteArray(Charsets.UTF_8))
-            out.flush()
-        }
+        rawLog(plus.trace + minus.trace + metrics)
 
         assertTrue("SG I-term did not change demand with nonzero dt", integralMovesDemand)
         assertTrue("+10% load SG level did not turn back toward setpoint: $metrics", plus.finalError < plus.peakError)
