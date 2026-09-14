@@ -1,8 +1,10 @@
 package com.nyerahworks.criticalstate.sim
 
+import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class ReactorSimulatorTest {
@@ -68,6 +70,54 @@ class ReactorSimulatorTest {
         assertTrue(state.rodInsertion > ReferencePlant.REFERENCE_ROD_INSERTION)
         assertTrue(state.decayHeatMw > 0.0)
         assertTrue(state.fissionPowerMw < ReferencePlant.RATED_THERMAL_POWER_MW)
+    }
+
+    @Test
+    fun item1ScramWorthAndFiveSecondTrace() {
+        val fullStrokePcm = ReferencePlant.TOTAL_CONTROL_BANK_WORTH * 1.0e5
+        assertTrue("full stroke worth $fullStrokePcm pcm", fullStrokePcm >= 4000.0)
+
+        val rod = RodDriveModel()
+        rod.scram()
+        var elapsed = 0.0
+        while (elapsed < 5.0 - 1.0e-12) {
+            rod.advance(0.01)
+            elapsed += 0.01
+        }
+        val fromReferencePcm = -rod.reactivity() * 1.0e5
+        assertTrue("55%-to-full worth $fromReferencePcm pcm", fromReferencePcm >= 2000.0)
+
+        val simulator = ReactorSimulator()
+        val trace = mutableListOf<PlantState>()
+        simulator.trip()
+        trace += simulator.snapshot()
+        repeat(10) {
+            trace += simulator.advance(0.5, 1.0)
+        }
+
+        assertTrue(trace[1].rodInsertion > trace[0].rodInsertion)
+        assertTrue(trace[1].rodInsertion < 1.0)
+        assertTrue(trace.last().rodInsertion >= 0.9999)
+        assertTrue(trace.all { it.totalReactivityPcm.isFinite() })
+        assertTrue(trace.all { it.fissionPowerMw.isFinite() && it.fissionPowerMw >= 0.0 })
+        assertTrue(trace.all { it.decayHeatMw.isFinite() && it.decayHeatMw > 0.0 })
+        assertTrue(trace.last().rodReactivityPcm <= -2000.0)
+
+        val metrics = buildString {
+            append(String.format(Locale.US, "ITEM1 fullStroke=%.3f pcm from55=%.3f pcm\n", fullStrokePcm, fromReferencePcm))
+            trace.forEachIndexed { index, s ->
+                append(String.format(
+                    Locale.US,
+                    "t=%.1f rho=%.3f pcm rod=%.5f fission=%.3f MW decay=%.3f MW\n",
+                    index * 0.5,
+                    s.totalReactivityPcm,
+                    s.rodInsertion,
+                    s.fissionPowerMw,
+                    s.decayHeatMw,
+                ))
+            }
+        }
+        fail(metrics)
     }
 
     @Test
