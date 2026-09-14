@@ -133,20 +133,23 @@ internal class PrimaryLoopModel(
         private const val COLD_LEG_VOLUME_M3 = ReferencePlant.LOOP_LIQUID_VOLUME_M3 - HOT_LEG_VOLUME_M3
     }
 
-    private var massFlowKgS = ReferencePlant.FLOW_PER_LOOP_KG_PER_S
-    private var hotLegEnthalpy = water.statePT(
-        ReferencePlant.PRIMARY_PRESSURE_MPA,
-        ReferencePlant.HOT_LEG_T_K,
-    ).enthalpyKjKg
-    private var coldLegEnthalpy = water.statePT(
+    // The rated heat balance defines the hot-leg enthalpy. This keeps the
+    // configured 3411 MWth and 61.5e6 kg/h flow exactly consistent with IF97,
+    // rather than initializing the loop from an independently rounded T_hot.
+    private val referenceColdEnthalpy = water.statePT(
         ReferencePlant.PRIMARY_PRESSURE_MPA,
         ReferencePlant.COLD_LEG_T_K,
     ).enthalpyKjKg
+    private val referenceHotEnthalpy = referenceColdEnthalpy +
+        ReferencePlant.RATED_THERMAL_POWER_MW * 1000.0 / ReferencePlant.CORE_FLOW_KG_PER_S
 
-    private val referenceDensity = 0.5 * (
-        water.statePT(ReferencePlant.PRIMARY_PRESSURE_MPA, ReferencePlant.HOT_LEG_T_K).densityKgM3 +
-            water.statePT(ReferencePlant.PRIMARY_PRESSURE_MPA, ReferencePlant.COLD_LEG_T_K).densityKgM3
-        )
+    private var massFlowKgS = ReferencePlant.FLOW_PER_LOOP_KG_PER_S
+    private var hotLegEnthalpy = referenceHotEnthalpy
+    private var coldLegEnthalpy = referenceColdEnthalpy
+
+    private val referenceHotState = water.statePH(ReferencePlant.PRIMARY_PRESSURE_MPA, referenceHotEnthalpy)
+    private val referenceColdState = water.statePH(ReferencePlant.PRIMARY_PRESSURE_MPA, referenceColdEnthalpy)
+    private val referenceDensity = 0.5 * (referenceHotState.densityKgM3 + referenceColdState.densityKgM3)
     private val pump = CentrifugalPump(
         ratedRpm = ReferencePlant.RCP_RATED_RPM,
         ratedFlowKgS = ReferencePlant.FLOW_PER_LOOP_KG_PER_S,
@@ -164,14 +167,8 @@ internal class PrimaryLoopModel(
 
     fun reset() {
         massFlowKgS = ReferencePlant.FLOW_PER_LOOP_KG_PER_S
-        hotLegEnthalpy = water.statePT(
-            ReferencePlant.PRIMARY_PRESSURE_MPA,
-            ReferencePlant.HOT_LEG_T_K,
-        ).enthalpyKjKg
-        coldLegEnthalpy = water.statePT(
-            ReferencePlant.PRIMARY_PRESSURE_MPA,
-            ReferencePlant.COLD_LEG_T_K,
-        ).enthalpyKjKg
+        hotLegEnthalpy = referenceHotEnthalpy
+        coldLegEnthalpy = referenceColdEnthalpy
         pump.reset()
     }
 
@@ -203,15 +200,15 @@ internal class PrimaryLoopModel(
         val pumpPressurePa = rho * 9.80665 * pumpState.headM
         val buoyancyPa = 9.80665 * ReferencePlant.LOOP_EFFECTIVE_ELEVATION_M *
             (cold.densityKgM3 - hot.densityKgM3)
-        val lossPa = pressureLossPa(massFlowKgS, rho, hot.viscosityPaS)
+        val lossPa = pressureLossPa(massFlowKgS, rho, 0.5 * (hot.viscosityPaS + cold.viscosityPaS))
         val residualPa = pumpPressurePa + buoyancyPa - lossPa
         val dmdt = flowArea / ReferencePlant.LOOP_EQUIVALENT_LENGTH_M * residualPa
         massFlowKgS += dmdt * dt
-        // Reverse natural circulation is permitted, but bound only at an extreme
-        // numerical envelope rather than forcing pump-off flow to zero.
         if (!massFlowKgS.isFinite()) massFlowKgS = 0.0
-        massFlowKgS = massFlowKgS.coerceIn(-0.25 * ReferencePlant.FLOW_PER_LOOP_KG_PER_S,
-            1.6 * ReferencePlant.FLOW_PER_LOOP_KG_PER_S)
+        massFlowKgS = massFlowKgS.coerceIn(
+            -0.25 * ReferencePlant.FLOW_PER_LOOP_KG_PER_S,
+            1.6 * ReferencePlant.FLOW_PER_LOOP_KG_PER_S,
+        )
         return snapshot(pressureMpa, condition)
     }
 
@@ -238,15 +235,13 @@ internal class PrimaryLoopModel(
             pressureLossMpa = lossPa / 1.0e6,
             buoyancyHeadKpa = buoyancyPa / 1000.0,
             liquidMassKg = hotMass + coldMass,
-            storedEnergyMj = (
-                hotMass * hot.internalEnergyKjKg + coldMass * cold.internalEnergyKjKg
-                ) / 1000.0,
+            storedEnergyMj = (hotMass * hot.internalEnergyKjKg + coldMass * cold.internalEnergyKjKg) / 1000.0,
         )
     }
 
     private fun calculateReferenceMinorK(): Double {
-        val hot = water.statePT(ReferencePlant.PRIMARY_PRESSURE_MPA, ReferencePlant.HOT_LEG_T_K)
-        val cold = water.statePT(ReferencePlant.PRIMARY_PRESSURE_MPA, ReferencePlant.COLD_LEG_T_K)
+        val hot = referenceHotState
+        val cold = referenceColdState
         val rho = 0.5 * (hot.densityKgM3 + cold.densityKgM3)
         val q = ReferencePlant.FLOW_PER_LOOP_KG_PER_S / rho
         val v = q / flowArea
@@ -265,8 +260,7 @@ internal class PrimaryLoopModel(
     private fun pressureLossPa(flowKgS: Double, rho: Double, viscosity: Double): Double {
         if (abs(flowKgS) < 1.0e-9) return 0.0
         val v = flowKgS / max(rho * flowArea, 1.0e-9)
-        val re = rho * abs(v) * ReferencePlant.LOOP_EQUIVALENT_DIAMETER_M /
-            max(viscosity, 1.0e-9)
+        val re = rho * abs(v) * ReferencePlant.LOOP_EQUIVALENT_DIAMETER_M / max(viscosity, 1.0e-9)
         val f = frictionFactor(re)
         val coefficient = f * ReferencePlant.LOOP_EQUIVALENT_LENGTH_M /
             ReferencePlant.LOOP_EQUIVALENT_DIAMETER_M + calibratedMinorK
@@ -277,7 +271,6 @@ internal class PrimaryLoopModel(
         re <= 1.0 -> 64.0
         re < 2300.0 -> 64.0 / re
         else -> {
-            // Haaland explicit approximation to Colebrook-White.
             val term = (ReferencePlant.LOOP_ROUGHNESS_M /
                 (3.7 * ReferencePlant.LOOP_EQUIVALENT_DIAMETER_M)).pow(1.11) + 6.9 / re
             1.0 / (-1.8 * log10(term)).pow(2.0)
