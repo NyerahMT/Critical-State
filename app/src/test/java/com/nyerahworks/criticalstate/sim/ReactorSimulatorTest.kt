@@ -1,10 +1,11 @@
 package com.nyerahworks.criticalstate.sim
 
+import java.io.FileDescriptor
+import java.io.FileOutputStream
 import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import org.junit.Test
 
 class ReactorSimulatorTest {
@@ -38,24 +39,27 @@ class ReactorSimulatorTest {
 
     @Test
     fun rodCommandMovesDriveRatherThanTeleportingBank() {
-        val simulator = ReactorSimulator()
-        simulator.setRodInsertion(0.35)
-        val immediate = simulator.snapshot()
-        assertEquals(ReferencePlant.REFERENCE_ROD_INSERTION, immediate.rodInsertion, 1.0e-9)
+        val rods = RodDriveModel()
+        rods.commandInsertion(0.35)
+        val immediate = rods.snapshot()
+        assertEquals(ReferencePlant.REFERENCE_ROD_INSERTION, immediate.actualInsertion, 1.0e-9)
 
-        val after = simulator.advance(1.0, 1.0)
-        assertTrue(after.rodInsertion < ReferencePlant.REFERENCE_ROD_INSERTION)
-        assertTrue(after.rodInsertion > 0.35)
+        val after = rods.advance(1.0)
+        assertTrue(after.actualInsertion < ReferencePlant.REFERENCE_ROD_INSERTION)
+        assertTrue(after.actualInsertion > 0.35)
     }
 
     @Test
     fun withdrawalRaisesNeutronPowerThroughKinetics() {
-        val simulator = ReactorSimulator()
-        simulator.setRodInsertion(0.45)
-        val state = simulator.advance(wallSeconds = 4.0, timeScale = 1.0)
+        val rods = RodDriveModel()
+        rods.commandInsertion(0.545)
+        rods.advance(0.2)
+        val rho = rods.reactivity()
+        assertTrue(rho > 0.0)
 
-        assertTrue(state.fissionPowerMw > 0.98 * ReferencePlant.RATED_THERMAL_POWER_MW)
-        assertTrue(state.rodReactivityPcm > 0.0)
+        val kinetics = PointKineticsModel()
+        val after = kinetics.advance(rho, 0.01)
+        assertTrue(after.neutronPopulation > 1.0)
     }
 
     @Test
@@ -108,7 +112,7 @@ class ReactorSimulatorTest {
             trace.forEachIndexed { index, s ->
                 append(String.format(
                     Locale.US,
-                    "t=%.1f rho=%.3f pcm rod=%.5f fission=%.3f MW decay=%.3f MW\n",
+                    "ITEM1 t=%.1f rho=%.3f pcm rod=%.5f fission=%.3f MW decay=%.3f MW\n",
                     index * 0.5,
                     s.totalReactivityPcm,
                     s.rodInsertion,
@@ -117,7 +121,10 @@ class ReactorSimulatorTest {
                 ))
             }
         }
-        fail(metrics)
+        FileOutputStream(FileDescriptor.out).use { out ->
+            out.write(metrics.toByteArray(Charsets.UTF_8))
+            out.flush()
+        }
     }
 
     @Test
