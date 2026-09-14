@@ -36,7 +36,10 @@ internal object ReferencePlant {
 
     // Reference operating point completed with compatible public PWR data.
     const val COLD_LEG_T_K = 565.15
-    const val HOT_LEG_T_K = 598.15
+    // Chosen so the IF97 enthalpy rise from cold to hot leg is consistent with
+    // 3411 MWth at the declared 61.5e6 kg/h core flow (rather than an
+    // independently rounded temperature that creates a startup heat imbalance).
+    const val HOT_LEG_T_K = 599.73
     const val SG_PRESSURE_MPA = 6.20
     const val STEAM_HEADER_PRESSURE_MPA = 6.00
     const val CONDENSER_PRESSURE_MPA = 0.0080
