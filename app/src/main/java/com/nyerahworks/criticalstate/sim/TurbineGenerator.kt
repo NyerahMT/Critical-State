@@ -61,6 +61,7 @@ internal class FeedwaterTrainModel(
     private val area = PI * PIPE_DIAMETER_M * PIPE_DIAMETER_M / 4.0
     private val valvePositions = DoubleArray(ReferencePlant.LOOP_COUNT) { REFERENCE_VALVE }
     private val baseValveK: Double
+    private val pumpHeadK: Double
 
     private var totalFlow = ratedTotalFlow
     private var extractionFlow = 0.28 * ratedTotalFlow
@@ -69,6 +70,9 @@ internal class FeedwaterTrainModel(
 
     init {
         val rho = refFeedState.densityKgM3
+        val ratedVolumetricFlow = ratedTotalFlow / rho
+        pumpHeadK = (SHUTOFF_HEAD_M - RATED_HEAD_M) /
+            max(ratedVolumetricFlow * ratedVolumetricFlow, 1.0e-9)
         val pumpPa = rho * 9.80665 * RATED_HEAD_M
         val staticPa = (ReferencePlant.SG_PRESSURE_MPA - ReferencePlant.CONDENSER_PRESSURE_MPA) * 1e6
         val v = ratedTotalFlow / (rho * area)
@@ -112,7 +116,7 @@ internal class FeedwaterTrainModel(
     ): FeedwaterSnapshot {
         for (i in valvePositions.indices) {
             val demand = sgDemandsKgS.getOrElse(i) { ratedPerSgFlow }
-            val target = (REFERENCE_VALVE * demand / ratedPerSgFlow).coerceIn(0.08, 1.0)
+            val target = (REFERENCE_VALVE * demand / ratedPerSgFlow).coerceIn(0.03, 1.0)
             val delta = (target - valvePositions[i]).coerceIn(-VALVE_RATE_PER_S * dt, VALVE_RATE_PER_S * dt)
             valvePositions[i] = (valvePositions[i] + delta).coerceIn(0.03, 1.0)
         }
@@ -122,19 +126,35 @@ internal class FeedwaterTrainModel(
         val mixState = runCatching { water.statePH(avgSgP + 1.0, mixH) }.getOrElse { refFeedState }
         val rho = mixState.densityKgM3
         val pumpState = pump.advance(totalFlow, rho, pumpCondition, dt)
-        val pumpPressure = rho * 9.80665 * pumpState.headM
         val staticPressure = max(0.0, avgSgP - condenserPressureMpa) * 1e6
         val avgValve = max(0.03, valvePositions.average())
-        val v = totalFlow / max(rho * area, 1.0e-9)
-        val valveLoss = baseValveK / (avgValve * avgValve) * 0.5 * rho * v * abs(v)
-        val residual = pumpPressure - staticPressure - valveLoss
-        val dmdt = area / PIPE_LENGTH_M * residual
-        totalFlow = (totalFlow + dmdt * dt).coerceIn(0.0, 1.5 * ratedTotalFlow)
+
+        // The previous explicit momentum update was numerically stiff because both
+        // the pump curve and valve loss are quadratic in mass flow.  Solve that
+        // same inertia equation implicitly for m_dot(n+1):
+        //   m1 = m0 + dt*A/L*(drive - resistance*m1^2)
+        // This preserves pump head, valve resistance and pipe inertia while
+        // preventing the 0↔rated-flow oscillation that defeated level control.
+        val speedRatio = (pumpState.rpm / RATED_RPM).coerceAtLeast(0.0)
+        val pumpShutoffPa = rho * 9.80665 * SHUTOFF_HEAD_M * speedRatio * speedRatio
+        val drivePa = pumpShutoffPa - staticPressure
+        val pumpResistancePaPerKgS2 = 9.80665 * pumpHeadK / max(rho, 1.0)
+        val valveResistancePaPerKgS2 = baseValveK / (avgValve * avgValve) *
+            0.5 / max(rho * area * area, 1.0e-9)
+        val resistance = pumpResistancePaPerKgS2 + valveResistancePaPerKgS2
+        val inertanceFactor = area / PIPE_LENGTH_M
+        val c = totalFlow + dt * inertanceFactor * drivePa
+        totalFlow = if (c <= 0.0) {
+            0.0
+        } else {
+            val a = dt * inertanceFactor * resistance
+            if (a <= 1.0e-18) c else 2.0 * c / (1.0 + sqrt(1.0 + 4.0 * a * c))
+        }.coerceIn(0.0, 1.5 * ratedTotalFlow)
 
         lastSnapshot = buildSnapshot(
             condenserLiquidEnthalpy = condenserLiquidEnthalpyKjKg,
             averageSgPressureMpa = avgSgP,
-            pumpState = pumpState,
+            pumpState = pump.snapshot(totalFlow, rho, pumpCondition),
         )
         return lastSnapshot
     }
