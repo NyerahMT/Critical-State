@@ -190,6 +190,10 @@ internal class SteamGeneratorModel(
         lastFeedwaterFlow = feedwaterFlowKgS
         lastSteamFlow = steamFlow
         lastHeatTransferMw = totalQSecondary
+
+        // Advance the SG level-controller integral on the actual plant step.
+        // snapshot() remains read-only by evaluating demand with dt = 0.
+        feedwaterDemand(dt)
         return snapshot(primaryPressureMpa, primaryMass, primaryStoredMj)
     }
 
