@@ -129,12 +129,9 @@ internal class FeedwaterTrainModel(
         val staticPressure = max(0.0, avgSgP - condenserPressureMpa) * 1e6
         val avgValve = max(0.03, valvePositions.average())
 
-        // The previous explicit momentum update was numerically stiff because both
-        // the pump curve and valve loss are quadratic in mass flow.  Solve that
-        // same inertia equation implicitly for m_dot(n+1):
-        //   m1 = m0 + dt*A/L*(drive - resistance*m1^2)
-        // This preserves pump head, valve resistance and pipe inertia while
-        // preventing the 0↔rated-flow oscillation that defeated level control.
+        // Implicit solution of the same pump-head/system-loss inertia equation.
+        // Both pump curve and valve loss are quadratic in mass flow; evaluating
+        // resistance at m_dot(n+1) prevents numerical 0↔rated flow chatter.
         val speedRatio = (pumpState.rpm / RATED_RPM).coerceAtLeast(0.0)
         val pumpShutoffPa = rho * 9.80665 * SHUTOFF_HEAD_M * speedRatio * speedRatio
         val drivePa = pumpShutoffPa - staticPressure
@@ -335,12 +332,18 @@ internal class TurbineGeneratorModel(
     ): TurbineGeneratorSnapshot {
         val targetMw = loadCommand * ReferencePlant.RATED_GROSS_ELECTRIC_MW
         val errorPu = (targetMw - lastGrossMw) / ReferencePlant.RATED_GROSS_ELECTRIC_MW
-        governorIntegral = (governorIntegral + errorPu * dt).coerceIn(-0.6, 0.6)
+        governorIntegral = (governorIntegral + errorPu * dt).coerceIn(-0.5, 0.5)
         val speedError = if (breakerClosed) 0.0 else
             (ReferencePlant.SYNCHRONOUS_RPM - freeRotorRpm) / ReferencePlant.SYNCHRONOUS_RPM
         val valveCommand = if (turbineTrip) 0.0 else {
-            (REFERENCE_VALVE + 0.75 * errorPu + 0.20 * governorIntegral + 1.8 * speedError)
-                .coerceIn(0.0, 1.0)
+            // The load reference supplies the steady valve feed-forward; the
+            // small PI term trims thermodynamic deviations.  The old high-gain
+            // pure MW-error loop drove the swing equation through loss of sync
+            // on an otherwise ordinary ±10% load step.
+            (REFERENCE_VALVE * loadCommand +
+                0.02 * errorPu +
+                0.005 * governorIntegral +
+                1.8 * speedError).coerceIn(0.0, 1.0)
         }
         val deltaValve = (valveCommand - valvePosition)
             .coerceIn(-VALVE_RATE_PER_S * dt, VALVE_RATE_PER_S * dt)
@@ -388,7 +391,6 @@ internal class TurbineGeneratorModel(
                 diagnostic = "Generator separated: loss of synchronism"
             }
         } else {
-            // Rotor energy from the same inertia constant used in the swing model.
             val omegaMechanical = max(1.0, freeRotorRpm * 2.0 * PI / 60.0)
             val omegaRated = ReferencePlant.SYNCHRONOUS_RPM * 2.0 * PI / 60.0
             val j = 2.0 * GENERATOR_H_S * ReferencePlant.RATED_GROSS_ELECTRIC_MW * 1e6 /
