@@ -8,14 +8,14 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        // Fresh diagnostic package so this test cannot collide with any previous APK.
+        // Keep the G-Mee-compatible package while the prototype is iterating.
         applicationId = "com.nyerahworks.criticalstate.gmee02"
 
         // Match the compatibility envelope of the known-good F-Droid APK.
         minSdk = 23
         targetSdk = 30
-        versionCode = 8
-        versionName = "0.1.7-gmee02-resource-table"
+        versionCode = 9
+        versionName = "0.2.0-pressurizer"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -73,5 +73,6 @@ android {
 }
 
 dependencies {
+    implementation("com.hummeling:if97:2.0.0")
     testImplementation("junit:junit:4.13.2")
 }

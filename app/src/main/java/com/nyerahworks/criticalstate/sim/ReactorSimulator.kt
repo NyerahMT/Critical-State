@@ -15,7 +15,7 @@ import kotlin.math.min
 class ReactorSimulator {
     companion object {
         const val REFERENCE_THERMAL_POWER_MW = 3411.0
-        const val REFERENCE_PRIMARY_PRESSURE_MPA = 15.51
+        const val REFERENCE_PRIMARY_PRESSURE_MPA = PressurizerModel.REFERENCE_PRESSURE_MPA
 
         private const val REFERENCE_FUEL_TEMP_K = 1080.0
         private const val REFERENCE_COOLANT_TEMP_K = 590.0
@@ -62,8 +62,18 @@ class ReactorSimulator {
     }
 
     private var state = PlantState()
+    private val pressurizer = PressurizerModel()
     private val precursors = DoubleArray(6) { i ->
         BETA[i] / (PROMPT_GENERATION_TIME_S * LAMBDA[i])
+    }
+
+    init {
+        val pzr = pressurizer.snapshot()
+        state = state.copy(
+            primaryPressureMpa = pzr.pressureMpa,
+            pressurizerTemperatureK = pzr.saturationTemperatureK,
+            pressurizerLevelFraction = pzr.levelFraction,
+        )
     }
 
     fun snapshot(): PlantState = state
@@ -82,7 +92,15 @@ class ReactorSimulator {
     }
 
     fun reset() {
-        state = PlantState()
+        val pzr = pressurizer.reset()
+        state = PlantState(
+            primaryPressureMpa = pzr.pressureMpa,
+            pressurizerTemperatureK = pzr.saturationTemperatureK,
+            pressurizerLevelFraction = pzr.levelFraction,
+            pressurizerHeaterFraction = pzr.heaterFraction,
+            pressurizerSprayFraction = pzr.sprayFraction,
+            pressurizerSurgeKgPerS = pzr.surgeFlowKgPerS,
+        )
         for (i in precursors.indices) {
             precursors[i] = BETA[i] / (PROMPT_GENERATION_TIME_S * LAMBDA[i])
         }
@@ -145,6 +163,11 @@ class ReactorSimulator {
         val newCoolantTempK = old.coolantTemperatureK +
             (fuelToCoolantMw - newSecondaryRemovalMw) / COOLANT_HEAT_CAPACITY_MJ_PER_K * dt
 
+        val pzr = pressurizer.advance(
+            primaryCoolantTemperatureK = newCoolantTempK,
+            dt = dt,
+        )
+
         val omega = if (newN > 0.0 && oldN > 0.0) ln(newN / oldN) / dt else 0.0
         val period = when {
             kotlin.math.abs(omega) < 1.0e-8 -> null
@@ -157,12 +180,17 @@ class ReactorSimulator {
             fissionPowerMw = fissionPowerMw,
             fuelTemperatureK = newFuelTempK,
             coolantTemperatureK = newCoolantTempK,
-            primaryPressureMpa = REFERENCE_PRIMARY_PRESSURE_MPA,
+            primaryPressureMpa = pzr.pressureMpa,
+            pressurizerTemperatureK = pzr.saturationTemperatureK,
+            pressurizerLevelFraction = pzr.levelFraction,
+            pressurizerHeaterFraction = pzr.heaterFraction,
+            pressurizerSprayFraction = pzr.sprayFraction,
+            pressurizerSurgeKgPerS = pzr.surgeFlowKgPerS,
             secondaryHeatRemovalMw = newSecondaryRemovalMw,
             generatorPowerMw = newSecondaryRemovalMw * THERMAL_TO_ELECTRIC_EFFICIENCY,
             totalReactivityPcm = totalRho * 100_000.0,
             reactorPeriodSeconds = period,
-            diagnostic = diagnostic,
+            diagnostic = diagnostic ?: pzr.diagnostic,
         )
     }
 

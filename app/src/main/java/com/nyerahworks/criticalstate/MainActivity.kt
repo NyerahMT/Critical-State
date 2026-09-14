@@ -31,6 +31,7 @@ class MainActivity : Activity() {
     private lateinit var generatorText: TextView
     private lateinit var coolantText: TextView
     private lateinit var pressureText: TextView
+    private lateinit var pressurizerControlText: TextView
     private lateinit var reactivityText: TextView
     private lateinit var periodText: TextView
     private lateinit var rodValueText: TextView
@@ -88,7 +89,8 @@ class MainActivity : Activity() {
         powerText = metric(root, "REACTOR POWER")
         generatorText = metric(root, "GENERATOR")
         coolantText = metric(root, "THERMAL")
-        pressureText = metric(root, "PRIMARY")
+        pressureText = metric(root, "PRIMARY / PRESSURIZER")
+        pressurizerControlText = metric(root, "PRESSURIZER CONTROL")
         reactivityText = metric(root, "REACTIVITY")
         periodText = metric(root, "REACTOR PERIOD")
 
@@ -149,7 +151,8 @@ class MainActivity : Activity() {
         root.addView(text("Neutronics  •  six-group point kinetics", 13f, Color.rgb(232, 237, 242), false))
         root.addView(text("Rod worth    •  S-curve fallback / calibration required", 13f, Color.rgb(174, 187, 198), false))
         root.addView(text("Thermal      •  lumped fuel/coolant energy balance", 13f, Color.rgb(174, 187, 198), false))
-        root.addView(text("Pressure     •  reference value held; pressurizer deferred", 13f, Color.rgb(174, 187, 198), false))
+        root.addView(text("Pressure     •  mass/energy pressurizer + IAPWS-IF97 properties", 13f, Color.rgb(174, 187, 198), false))
+        root.addView(text("RCS surge    •  reduced thermal-expansion boundary / calibration required", 13f, Color.rgb(174, 187, 198), false))
 
         root.addView(space(18))
         root.addView(text(
@@ -179,7 +182,20 @@ class MainActivity : Activity() {
         )
         generatorText.text = String.format(Locale.US, "%.0f MW   •   load %.0f %%", state.generatorPowerMw, state.turbineLoad * 100.0)
         coolantText.text = String.format(Locale.US, "Coolant %.1f K   •   Fuel %.0f K", state.coolantTemperatureK, state.fuelTemperatureK)
-        pressureText.text = String.format(Locale.US, "%.2f MPa", state.primaryPressureMpa)
+        pressureText.text = String.format(
+            Locale.US,
+            "%.3f MPa   •   level %.1f %%   •   Tsat %.1f °C",
+            state.primaryPressureMpa,
+            state.pressurizerLevelFraction * 100.0,
+            state.pressurizerTemperatureK - 273.15,
+        )
+        pressurizerControlText.text = String.format(
+            Locale.US,
+            "HEAT %.0f %%   •   SPRAY %.0f %%   •   SURGE %+.1f kg/s",
+            state.pressurizerHeaterFraction * 100.0,
+            state.pressurizerSprayFraction * 100.0,
+            state.pressurizerSurgeKgPerS,
+        )
         reactivityText.text = String.format(Locale.US, "%+.1f pcm", state.totalReactivityPcm)
         periodText.text = state.reactorPeriodSeconds?.let {
             if (abs(it) > 9999.0) "> 9999 s" else String.format(Locale.US, "%+.1f s", it)
