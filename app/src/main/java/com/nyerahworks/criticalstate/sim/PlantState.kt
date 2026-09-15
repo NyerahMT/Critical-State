@@ -32,7 +32,9 @@ data class PlantState(
     val hotLegTemperatureK: Double = ReferencePlant.HOT_LEG_T_K,
     val coldLegTemperatureK: Double = ReferencePlant.COLD_LEG_T_K,
     val subcoolingMarginK: Double = 20.0,
-    val hotChannelHeatFluxMwM2: Double = 0.0,
+    // Average core surface flux multiplied by the configured 1.55 peak factor;
+    // this is not a resolved local hot-channel quantity and is not DNBR.
+    val estimatedPeakFactorHeatFluxMwM2: Double = 0.0,
 
     // Primary system / RCPs
     val primaryPressureMpa: Double = ReferencePlant.PRIMARY_PRESSURE_MPA,

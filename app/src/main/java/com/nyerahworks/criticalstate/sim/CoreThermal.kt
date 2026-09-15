@@ -17,7 +17,7 @@ internal data class CoreThermalSnapshot(
     val coolantOutletEnthalpyKjKg: Double,
     val moderatorDensityKgM3: Double,
     val subcoolingMarginK: Double,
-    val hotChannelHeatFluxMwM2: Double,
+    val estimatedPeakFactorHeatFluxMwM2: Double,
     val storedEnergyMj: Double,
     val coolantMassKg: Double,
     val diagnostic: String? = null,
@@ -148,7 +148,7 @@ internal class CoreThermalModel(
         var coolantMass = 0.0
         var stored = 0.0
         var outletT = ReferencePlant.HOT_LEG_T_K
-        var outletH = nodes.last().coolantEnthalpyKjKg
+        val outletH = nodes.last().coolantEnthalpyKjKg
         var minSubcool = Double.POSITIVE_INFINITY
 
         nodes.forEachIndexed { _, node ->
@@ -172,9 +172,10 @@ internal class CoreThermalModel(
         val outletState = water.statePH(primaryPressureMpa, outletH)
         outletT = outletState.temperatureK
 
-        // Average surface heat flux times a benchmark/calibration-required peaking factor.
+        // This is only average surface heat flux multiplied by the declared
+        // 1.55 peaking factor. It is not a resolved hot channel and is not DNBR.
         val totalArea = ReferencePlant.CORE_EFFECTIVE_HEAT_AREA_M2
-        val hotFlux = ReferencePlant.RATED_THERMAL_POWER_MW / totalArea * 1.55
+        val estimatedPeakFactorFlux = ReferencePlant.RATED_THERMAL_POWER_MW / totalArea * 1.55
 
         return CoreThermalSnapshot(
             fuelAverageK = fuelWeighted / nodes.size,
@@ -186,7 +187,7 @@ internal class CoreThermalModel(
             coolantOutletEnthalpyKjKg = outletH,
             moderatorDensityKgM3 = densityWeighted / nodes.size,
             subcoolingMarginK = minSubcool,
-            hotChannelHeatFluxMwM2 = hotFlux,
+            estimatedPeakFactorHeatFluxMwM2 = estimatedPeakFactorFlux,
             storedEnergyMj = stored,
             coolantMassKg = coolantMass,
             diagnostic = diagnostic,

@@ -20,6 +20,7 @@ internal data class SteamGeneratorSnapshot(
     val secondaryMassKg: Double,
     val primaryMassKg: Double,
     val storedEnergyMj: Double,
+    val saturationEnvelopeValid: Boolean = true,
     val diagnostic: String? = null,
 )
 
@@ -63,6 +64,7 @@ internal class SteamGeneratorModel(
         secondaryMassKg = ml + mv
         secondaryEnergyKj = ml * sat.liquidInternalEnergyKjKg + mv * sat.vapourInternalEnergyKjKg
         equilibrium = solver.solve(secondaryMassKg, secondaryEnergyKj)
+        appendSaturationDiagnostic()
 
         val hFw = water.statePT(ReferencePlant.SG_PRESSURE_MPA + 1.0, ReferencePlant.FEEDWATER_T_K).enthalpyKjKg
         referenceSteamFlowKgS = (
@@ -110,12 +112,13 @@ internal class SteamGeneratorModel(
         val mv = vapourV * sat.vapourDensityKgM3
         secondaryMassKg = ml + mv
         secondaryEnergyKj = ml * sat.liquidInternalEnergyKjKg + mv * sat.vapourInternalEnergyKjKg
+        diagnostic = null
         equilibrium = solver.solve(secondaryMassKg, secondaryEnergyKj)
+        appendSaturationDiagnostic()
         feedwaterIntegral = 0.0
         lastFeedwaterFlow = referenceSteamFlowKgS
         lastSteamFlow = referenceSteamFlowKgS
         lastHeatTransferMw = ReferencePlant.RATED_THERMAL_POWER_MW / ReferencePlant.LOOP_COUNT
-        diagnostic = null
         initializePrimaryAndWalls()
     }
 
@@ -183,22 +186,28 @@ internal class SteamGeneratorModel(
             secondaryMassKg = max(1.0, secondaryMassKg.takeIf { it.isFinite() } ?: 1.0)
         }
         equilibrium = solver.solve(secondaryMassKg, secondaryEnergyKj)
-        if (kotlin.math.abs(equilibrium.residualKjKg) > 1.0) {
-            diagnostic = "SG${index + 1} phase closure outside equilibrium envelope"
-        }
+        appendSaturationDiagnostic()
 
         lastFeedwaterFlow = feedwaterFlowKgS
         lastSteamFlow = steamFlow
         lastHeatTransferMw = totalQSecondary
+
+        // Advance the SG level-controller integral on the actual plant step.
+        // snapshot() remains read-only by evaluating demand with dt = 0.
+        feedwaterDemand(dt)
         return snapshot(primaryPressureMpa, primaryMass, primaryStoredMj)
     }
 
     fun feedwaterDemand(dt: Double): Double {
         val level = geometricLevel()
         val error = ReferencePlant.SG_REFERENCE_LEVEL - level
-        feedwaterIntegral = (feedwaterIntegral + error * dt).coerceIn(-0.25, 0.25)
-        val kp = 2.2 * referenceSteamFlowKgS
-        val ki = 0.12 * referenceSteamFlowKgS
+        // Steam-flow feed-forward carries the steady load.  Keep the integral
+        // deliberately small so it removes persistent inventory bias without
+        // storing enough action to drive a slow level overshoot after the error
+        // changes sign.  The proportional term does the transient correction.
+        feedwaterIntegral = (feedwaterIntegral + error * dt).coerceIn(-0.10, 0.10)
+        val kp = 4.0 * referenceSteamFlowKgS
+        val ki = 0.025 * referenceSteamFlowKgS
         return (lastSteamFlow + kp * error + ki * feedwaterIntegral)
             .coerceIn(0.20 * referenceSteamFlowKgS, 1.35 * referenceSteamFlowKgS)
     }
@@ -240,8 +249,15 @@ internal class SteamGeneratorModel(
             secondaryMassKg = secondaryMassKg,
             primaryMassKg = primaryMass,
             storedEnergyMj = secondaryEnergyKj / 1000.0 + primaryStored + wallStored,
+            saturationEnvelopeValid = equilibrium.saturationEnvelopeValid,
             diagnostic = diagnostic,
         )
+    }
+
+    private fun appendSaturationDiagnostic() {
+        if (equilibrium.saturationEnvelopeValid) return
+        val flag = "SG${index + 1} SECONDARY saturation (m,U) envelope invalid: ${equilibrium.diagnostic ?: "unspecified closure failure"}"
+        diagnostic = listOfNotNull(diagnostic, flag).joinToString("; ")
     }
 
     private fun geometricLevel(): Double =
@@ -330,6 +346,7 @@ internal data class CondenserSnapshot(
     val liquidEnthalpyKjKg: Double,
     val totalMassKg: Double,
     val internalEnergyKj: Double,
+    val saturationEnvelopeValid: Boolean = true,
     val diagnostic: String? = null,
 )
 
@@ -358,6 +375,7 @@ internal class CondenserModel(
         massKg = ml + mv
         energyKj = ml * sat.liquidInternalEnergyKjKg + mv * sat.vapourInternalEnergyKjKg
         equilibrium = solver.solve(massKg, energyKj)
+        appendSaturationDiagnostic()
         calculateHeatRejection(1.0)
     }
 
@@ -369,8 +387,9 @@ internal class CondenserModel(
         val mv = vv * sat.vapourDensityKgM3
         massKg = ml + mv
         energyKj = ml * sat.liquidInternalEnergyKjKg + mv * sat.vapourInternalEnergyKjKg
-        equilibrium = solver.solve(massKg, energyKj)
         diagnostic = null
+        equilibrium = solver.solve(massKg, energyKj)
+        appendSaturationDiagnostic()
         calculateHeatRejection(1.0)
     }
 
@@ -395,11 +414,15 @@ internal class CondenserModel(
             massKg = max(1.0, massKg.takeIf { it.isFinite() } ?: 1.0)
         }
         equilibrium = solver.solve(massKg, energyKj)
-        if (kotlin.math.abs(equilibrium.residualKjKg) > 1.0) {
-            diagnostic = "Condenser phase closure outside equilibrium envelope"
-        }
+        appendSaturationDiagnostic()
         calculateHeatRejection(condenserCondition)
         return snapshot()
+    }
+
+    private fun appendSaturationDiagnostic() {
+        if (equilibrium.saturationEnvelopeValid) return
+        val flag = "CONDENSER saturation (m,U) envelope invalid: ${equilibrium.diagnostic ?: "unspecified closure failure"}"
+        diagnostic = listOfNotNull(diagnostic, flag).joinToString("; ")
     }
 
     private fun calculateHeatRejection(condition: Double): Double {
@@ -426,6 +449,7 @@ internal class CondenserModel(
             liquidEnthalpyKjKg = sat.liquidEnthalpyKjKg,
             totalMassKg = massKg,
             internalEnergyKj = energyKj,
+            saturationEnvelopeValid = equilibrium.saturationEnvelopeValid,
             diagnostic = diagnostic,
         )
     }

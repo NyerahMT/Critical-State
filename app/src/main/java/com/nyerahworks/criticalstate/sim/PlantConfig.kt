@@ -36,7 +36,10 @@ internal object ReferencePlant {
 
     // Reference operating point completed with compatible public PWR data.
     const val COLD_LEG_T_K = 565.15
-    const val HOT_LEG_T_K = 598.15
+    // Chosen so the IF97 enthalpy rise from cold to hot leg is consistent with
+    // 3411 MWth at the declared 61.5e6 kg/h core flow (rather than an
+    // independently rounded temperature that creates a startup heat imbalance).
+    const val HOT_LEG_T_K = 599.73
     const val SG_PRESSURE_MPA = 6.20
     const val STEAM_HEADER_PRESSURE_MPA = 6.00
     const val CONDENSER_PRESSURE_MPA = 0.0080
@@ -95,7 +98,9 @@ internal object ReferencePlant {
 
     // Neutronics / chemistry calibration state.
     const val REFERENCE_ROD_INSERTION = 0.55
-    const val TOTAL_CONTROL_BANK_WORTH = 0.0040
+    // 5000 pcm integral full-stroke worth. With the current integral-worth shape,
+    // a SCRAM from the 55% reference position inserts about 2004 pcm.
+    const val TOTAL_CONTROL_BANK_WORTH = 0.0500
     const val PROMPT_GENERATION_TIME_S = 2.0e-5
     const val DOPPLER_COEFF_PER_K = -1.4e-5
     const val MODERATOR_DENSITY_COEFF_PER_KG_M3 = 2.0e-5
@@ -129,6 +134,13 @@ internal object ReferencePlant {
             "kg/s",
             ModelStatus.BENCHMARK_DERIVED,
             "MIT BEAVRS",
+        ),
+        "neutronics.control_bank_worth" to ParameterProvenance(
+            TOTAL_CONTROL_BANK_WORTH * 1.0e5,
+            "pcm full stroke",
+            ModelStatus.CALIBRATION_REQUIRED,
+            "Generic reduced-order shutdown target",
+            "Integral full-stroke worth; 55% reference insertion to full insertion is about 2004 pcm.",
         ),
         "primary.loop_geometry" to ParameterProvenance(
             LOOP_LIQUID_VOLUME_M3,

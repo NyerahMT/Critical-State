@@ -330,6 +330,16 @@ class ReactorSimulator {
             dt = dt,
         )
         if (lastProtection.reactorTrip && !rod.scramActive) rods.scram()
+        // A protection trip caused by loss of forced RCS flow also removes the
+        // existing turbine load. This uses the already modeled turbine trip
+        // actuator; it does not invent a steam-dump or other secondary system.
+        if (
+            lastProtection.reactorTrip &&
+            "LOW RCS FLOW" in lastProtection.tripReasons &&
+            !turbineNow.tripped
+        ) {
+            turbine.trip()
+        }
 
         componentCondition.advance(
             loopSnapshots = loopNow,
@@ -357,15 +367,21 @@ class ReactorSimulator {
             totalWaterMassKg = totalWaterMass,
             totalStoredEnergyMj = totalStoredEnergy,
             fissionPowerMw = fissionPowerMw,
-            generatorNetMw = turbineNow.generatorNetMw,
+            turbineElectromagneticPowerMw = turbineNow.electromagneticPowerMw,
+            turbineStageMechanicalLossMw = turbineNow.stageMechanicalLossMw,
+            rotorMechanicalLossMw = turbineNow.rotorMechanicalLossMw,
             condenserHeatRejectionMw = condenserNow.heatRejectionMw,
+            // SGs consumed feedwaterBefore this step, including this hydraulic
+            // enthalpy rise. feedwaterNow belongs to the next coupled step.
+            feedwaterHydraulicPowerMw = feedwaterBefore.pump.hydraulicPowerMw,
+            pressurizerHeaterPowerMw = pzrNow.heaterPowerMw,
+            pressurizerHeatLossMw = pzrNow.heatLossMw,
             reliefFlowKgS = pzrNow.reliefFlowKgPerS,
+            reliefEnergyMw = pzrNow.reliefEnergyMw,
             dt = dt,
         )
 
         simulationSeconds += dt
-        // Consume these snapshots so Kotlin does not optimize away the explicit
-        // slow-state updates in future refactors.
         @Suppress("UNUSED_VARIABLE")
         val slowStateCheck = chemistryNow.boronPpm + poisonNow.xenon + headerNow.pressureMpa
     }
@@ -439,7 +455,7 @@ class ReactorSimulator {
             hotLegTemperatureK = hotAvg,
             coldLegTemperatureK = coldAvg,
             subcoolingMarginK = coreS.subcoolingMarginK,
-            hotChannelHeatFluxMwM2 = coreS.hotChannelHeatFluxMwM2,
+            estimatedPeakFactorHeatFluxMwM2 = coreS.estimatedPeakFactorHeatFluxMwM2,
             primaryPressureMpa = pzr.pressureMpa,
             totalPrimaryFlowKgPerS = totalFlow,
             loopFlowKgPerS = loopS.map { it.massFlowKgS },

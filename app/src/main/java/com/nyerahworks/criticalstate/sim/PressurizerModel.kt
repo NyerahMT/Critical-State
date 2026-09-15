@@ -1,6 +1,5 @@
 package com.nyerahworks.criticalstate.sim
 
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
 
@@ -18,13 +17,20 @@ internal data class PressurizerSnapshot(
     val totalMassKg: Double,
     val internalEnergyKj: Double,
     val inventoryResidualKg: Double,
+    val heaterPowerMw: Double = 0.0,
+    val heatLossMw: Double = 0.0,
+    val reliefEnergyMw: Double = 0.0,
+    val saturationEnvelopeValid: Boolean = true,
     val diagnostic: String? = null,
 )
 
 /**
- * Fixed-volume equilibrium pressurizer.  Mass and internal energy are the
+ * Fixed-volume equilibrium pressurizer. Mass and internal energy are the
  * conserved states; pressure, saturation temperature, phase split and level
  * are thermodynamic consequences.
+ *
+ * The primary-side surge term remains an inventory/swell coupling boundary,
+ * not a resolved hydraulic surge line.
  */
 internal class PressurizerModel(
     private val water: WaterProperties,
@@ -61,6 +67,9 @@ internal class PressurizerModel(
     private var surgeFlowKgS = 0.0
     private var sprayFlowKgS = 0.0
     private var reliefFlowKgS = 0.0
+    private var heaterPowerMw = 0.0
+    private var heatLossMw = 0.0
+    private var reliefEnergyMw = 0.0
     private var inventoryResidualKg = 0.0
     private var diagnostic: String? = null
 
@@ -77,19 +86,24 @@ internal class PressurizerModel(
         massKg = referenceMassKg
         energyKj = referenceEnergyKj
         equilibrium = solver.solve(massKg, energyKj)
+        appendSaturationDiagnostic()
     }
 
     fun reset(): PressurizerSnapshot {
         massKg = referenceMassKg
         energyKj = referenceEnergyKj
+        diagnostic = null
         equilibrium = solver.solve(massKg, energyKj)
+        appendSaturationDiagnostic()
         heaterFraction = 0.0
         sprayFraction = 0.0
         surgeFlowKgS = 0.0
         sprayFlowKgS = 0.0
         reliefFlowKgS = 0.0
+        heaterPowerMw = 0.0
+        heatLossMw = max(0.0, equilibrium.temperatureK - AMBIENT_K) * HEAT_LOSS_MW_PER_K
+        reliefEnergyMw = 0.0
         inventoryResidualKg = 0.0
-        diagnostic = null
         return snapshot()
     }
 
@@ -123,15 +137,16 @@ internal class PressurizerModel(
 
         val sat = water.saturationP(pressure)
         val surgeH = if (surgeFlowKgS >= 0.0) surgeSourceEnthalpyKjKg else sat.liquidEnthalpyKjKg
-        val heaterMw = heaterFraction * ReferencePlant.PZR_MAX_HEATER_MW
-        val heatLossMw = max(0.0, equilibrium.temperatureK - AMBIENT_K) * HEAT_LOSS_MW_PER_K
+        heaterPowerMw = heaterFraction * ReferencePlant.PZR_MAX_HEATER_MW
+        heatLossMw = max(0.0, equilibrium.temperatureK - AMBIENT_K) * HEAT_LOSS_MW_PER_K
+        reliefEnergyMw = reliefFlowKgS * sat.vapourEnthalpyKjKg / 1000.0
 
         massKg += (surgeFlowKgS + sprayFlowKgS - reliefFlowKgS) * dt
         energyKj += (
             surgeFlowKgS * surgeH +
                 sprayFlowKgS * spraySourceEnthalpyKjKg -
                 reliefFlowKgS * sat.vapourEnthalpyKjKg +
-                (heaterMw - heatLossMw) * 1000.0
+                (heaterPowerMw - heatLossMw) * 1000.0
             ) * dt
         if (massKg < 1.0 || !massKg.isFinite() || !energyKj.isFinite()) {
             diagnostic = "Pressurizer conserved state invalid"
@@ -140,11 +155,15 @@ internal class PressurizerModel(
         }
 
         equilibrium = solver.solve(massKg, energyKj)
+        appendSaturationDiagnostic()
         inventoryResidualKg = primaryLiquidMassKg + massKg - totalPrimaryInventoryKg
-        if (abs(equilibrium.residualKjKg) > 0.75) {
-            diagnostic = "Pressurizer phase closure outside equilibrium envelope"
-        }
         return snapshot()
+    }
+
+    private fun appendSaturationDiagnostic() {
+        if (equilibrium.saturationEnvelopeValid) return
+        val flag = "PZR saturation (m,U) envelope invalid: ${equilibrium.diagnostic ?: "unspecified closure failure"}"
+        diagnostic = listOfNotNull(diagnostic, flag).joinToString("; ")
     }
 
     fun snapshot(): PressurizerSnapshot = PressurizerSnapshot(
@@ -161,6 +180,10 @@ internal class PressurizerModel(
         totalMassKg = massKg,
         internalEnergyKj = energyKj,
         inventoryResidualKg = inventoryResidualKg,
+        heaterPowerMw = heaterPowerMw,
+        heatLossMw = heatLossMw,
+        reliefEnergyMw = reliefEnergyMw,
+        saturationEnvelopeValid = equilibrium.saturationEnvelopeValid,
         diagnostic = diagnostic,
     )
 }

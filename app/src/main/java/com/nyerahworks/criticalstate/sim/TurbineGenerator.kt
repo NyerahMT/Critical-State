@@ -61,6 +61,7 @@ internal class FeedwaterTrainModel(
     private val area = PI * PIPE_DIAMETER_M * PIPE_DIAMETER_M / 4.0
     private val valvePositions = DoubleArray(ReferencePlant.LOOP_COUNT) { REFERENCE_VALVE }
     private val baseValveK: Double
+    private val pumpHeadK: Double
 
     private var totalFlow = ratedTotalFlow
     private var extractionFlow = 0.28 * ratedTotalFlow
@@ -69,6 +70,9 @@ internal class FeedwaterTrainModel(
 
     init {
         val rho = refFeedState.densityKgM3
+        val ratedVolumetricFlow = ratedTotalFlow / rho
+        pumpHeadK = (SHUTOFF_HEAD_M - RATED_HEAD_M) /
+            max(ratedVolumetricFlow * ratedVolumetricFlow, 1.0e-9)
         val pumpPa = rho * 9.80665 * RATED_HEAD_M
         val staticPa = (ReferencePlant.SG_PRESSURE_MPA - ReferencePlant.CONDENSER_PRESSURE_MPA) * 1e6
         val v = ratedTotalFlow / (rho * area)
@@ -110,31 +114,66 @@ internal class FeedwaterTrainModel(
         pumpCondition: Double,
         dt: Double,
     ): FeedwaterSnapshot {
-        for (i in valvePositions.indices) {
-            val demand = sgDemandsKgS.getOrElse(i) { ratedPerSgFlow }
-            val target = (REFERENCE_VALVE * demand / ratedPerSgFlow).coerceIn(0.08, 1.0)
-            val delta = (target - valvePositions[i]).coerceIn(-VALVE_RATE_PER_S * dt, VALVE_RATE_PER_S * dt)
-            valvePositions[i] = (valvePositions[i] + delta).coerceIn(0.03, 1.0)
-        }
-
         val avgSgP = if (sgPressuresMpa.isNotEmpty()) sgPressuresMpa.average() else ReferencePlant.SG_PRESSURE_MPA
         val mixH = mixtureEnthalpy(condenserLiquidEnthalpyKjKg)
         val mixState = runCatching { water.statePH(avgSgP + 1.0, mixH) }.getOrElse { refFeedState }
         val rho = mixState.densityKgM3
         val pumpState = pump.advance(totalFlow, rho, pumpCondition, dt)
-        val pumpPressure = rho * 9.80665 * pumpState.headM
         val staticPressure = max(0.0, avgSgP - condenserPressureMpa) * 1e6
+        val speedRatio = (pumpState.rpm / RATED_RPM).coerceAtLeast(0.0)
+
+        // Convert the SG controllers' requested mass flows into valve positions
+        // by inverting the same pump-curve + quadratic valve-loss relationship
+        // that the forward hydraulic solve uses. A linear demand->opening proxy
+        // could not compensate for the large static SG pressure head and left
+        // actual flow high after a load increase even while demand was falling.
+        val requestedTotal = sgDemandsKgS.sum()
+            .coerceIn(0.20 * ratedTotalFlow, 1.35 * ratedTotalFlow)
+        val requestedQ = requestedTotal / max(rho, 1.0)
+        val equivalentQ = if (speedRatio > 1.0e-6) requestedQ / speedRatio else requestedQ
+        val requestedPumpHeadM = max(
+            0.0,
+            speedRatio * speedRatio *
+                (SHUTOFF_HEAD_M - pumpHeadK * equivalentQ * equivalentQ) *
+                (0.92 + 0.08 * pumpCondition),
+        )
+        val availableValvePa = max(
+            1.0,
+            rho * 9.80665 * requestedPumpHeadM - staticPressure,
+        )
+        val targetAverageValve = sqrt(
+            baseValveK * 0.5 * requestedTotal * requestedTotal /
+                max(rho * area * area * availableValvePa, 1.0),
+        ).coerceIn(0.03, 1.0)
+        val averageDemand = max(requestedTotal / ReferencePlant.LOOP_COUNT, 1.0e-9)
+        for (i in valvePositions.indices) {
+            val demand = sgDemandsKgS.getOrElse(i) { averageDemand }.coerceAtLeast(0.0)
+            val distributionScale = sqrt(demand / averageDemand).coerceIn(0.5, 1.5)
+            val target = (targetAverageValve * distributionScale).coerceIn(0.03, 1.0)
+            val delta = (target - valvePositions[i]).coerceIn(-VALVE_RATE_PER_S * dt, VALVE_RATE_PER_S * dt)
+            valvePositions[i] = (valvePositions[i] + delta).coerceIn(0.03, 1.0)
+        }
+
         val avgValve = max(0.03, valvePositions.average())
-        val v = totalFlow / max(rho * area, 1.0e-9)
-        val valveLoss = baseValveK / (avgValve * avgValve) * 0.5 * rho * v * abs(v)
-        val residual = pumpPressure - staticPressure - valveLoss
-        val dmdt = area / PIPE_LENGTH_M * residual
-        totalFlow = (totalFlow + dmdt * dt).coerceIn(0.0, 1.5 * ratedTotalFlow)
+        val pumpShutoffPa = rho * 9.80665 * SHUTOFF_HEAD_M * speedRatio * speedRatio
+        val drivePa = pumpShutoffPa - staticPressure
+        val pumpResistancePaPerKgS2 = 9.80665 * pumpHeadK / max(rho, 1.0)
+        val valveResistancePaPerKgS2 = baseValveK / (avgValve * avgValve) *
+            0.5 / max(rho * area * area, 1.0e-9)
+        val resistance = pumpResistancePaPerKgS2 + valveResistancePaPerKgS2
+        val inertanceFactor = area / PIPE_LENGTH_M
+        val c = totalFlow + dt * inertanceFactor * drivePa
+        totalFlow = if (c <= 0.0) {
+            0.0
+        } else {
+            val a = dt * inertanceFactor * resistance
+            if (a <= 1.0e-18) c else 2.0 * c / (1.0 + sqrt(1.0 + 4.0 * a * c))
+        }.coerceIn(0.0, 1.5 * ratedTotalFlow)
 
         lastSnapshot = buildSnapshot(
             condenserLiquidEnthalpy = condenserLiquidEnthalpyKjKg,
             averageSgPressureMpa = avgSgP,
-            pumpState = pumpState,
+            pumpState = pump.snapshot(totalFlow, rho, pumpCondition),
         )
         return lastSnapshot
     }
@@ -195,6 +234,12 @@ internal data class TurbineGeneratorSnapshot(
     val synchronized: Boolean,
     val tripped: Boolean,
     val storedRotationalEnergyMj: Double,
+    // Conservation bookkeeping for energy that the reduced-order component
+    // explicitly removes but does not store in another modeled thermal node.
+    val thermodynamicWorkMw: Double = mechanicalPowerMw,
+    val electromagneticPowerMw: Double = 0.0,
+    val stageMechanicalLossMw: Double = 0.0,
+    val rotorMechanicalLossMw: Double = 0.0,
     val diagnostic: String? = null,
 )
 
@@ -257,10 +302,14 @@ internal class TurbineGeneratorModel(
             condensateEnthalpy = condenserH,
             mechanicalEfficiency = 1.0,
         )
+        // HP/LP isentropic efficiencies already account for internal turbine
+        // losses. This final factor is a calibrated shaft/mechanical efficiency,
+        // so allow a physically valid value up to unity. The previous 0.98 cap
+        // forced the declared design point to settle about 17 MW below rated.
         calibratedMechanicalEfficiency = (
             ReferencePlant.RATED_GROSS_ELECTRIC_MW /
                 max(raw.mechanicalPowerMw * GENERATOR_EFFICIENCY, 1.0)
-            ).coerceIn(0.45, 0.98)
+            ).coerceIn(0.45, 1.0)
         lastSnapshot = buildInitialSnapshot()
     }
 
@@ -315,12 +364,14 @@ internal class TurbineGeneratorModel(
     ): TurbineGeneratorSnapshot {
         val targetMw = loadCommand * ReferencePlant.RATED_GROSS_ELECTRIC_MW
         val errorPu = (targetMw - lastGrossMw) / ReferencePlant.RATED_GROSS_ELECTRIC_MW
-        governorIntegral = (governorIntegral + errorPu * dt).coerceIn(-0.6, 0.6)
+        governorIntegral = (governorIntegral + errorPu * dt).coerceIn(-0.5, 0.5)
         val speedError = if (breakerClosed) 0.0 else
             (ReferencePlant.SYNCHRONOUS_RPM - freeRotorRpm) / ReferencePlant.SYNCHRONOUS_RPM
         val valveCommand = if (turbineTrip) 0.0 else {
-            (REFERENCE_VALVE + 0.75 * errorPu + 0.20 * governorIntegral + 1.8 * speedError)
-                .coerceIn(0.0, 1.0)
+            (REFERENCE_VALVE * loadCommand +
+                0.02 * errorPu +
+                0.005 * governorIntegral +
+                1.8 * speedError).coerceIn(0.0, 1.0)
         }
         val deltaValve = (valveCommand - valvePosition)
             .coerceIn(-VALVE_RATE_PER_S * dt, VALVE_RATE_PER_S * dt)
@@ -346,6 +397,8 @@ internal class TurbineGeneratorModel(
 
         val synchronousOmega = 2.0 * PI * ReferencePlant.GRID_HZ
         var electricalMw: Double
+        var electromagneticPowerMw: Double
+        var rotorMechanicalLossMw = 0.0
         var reactiveMvar = 0.0
         var diagnostic: String? = null
         var rpm: Double
@@ -357,7 +410,8 @@ internal class TurbineGeneratorModel(
                 (2.0 * GENERATOR_H_S)
             speedDeviationPu += dSpeed * dt
             rotorAngle += synchronousOmega * speedDeviationPu * dt
-            electricalMw = pePu * MACHINE_BASE_MW
+            electromagneticPowerMw = max(0.0, pePu * MACHINE_BASE_MW)
+            electricalMw = electromagneticPowerMw
             reactiveMvar = (1.0 / REACTANCE_PU) *
                 (INTERNAL_EMF_PU * cos(rotorAngle) - 1.0) *
                 ReferencePlant.RATED_GROSS_ELECTRIC_MW
@@ -368,16 +422,17 @@ internal class TurbineGeneratorModel(
                 diagnostic = "Generator separated: loss of synchronism"
             }
         } else {
-            // Rotor energy from the same inertia constant used in the swing model.
             val omegaMechanical = max(1.0, freeRotorRpm * 2.0 * PI / 60.0)
             val omegaRated = ReferencePlant.SYNCHRONOUS_RPM * 2.0 * PI / 60.0
             val j = 2.0 * GENERATOR_H_S * ReferencePlant.RATED_GROSS_ELECTRIC_MW * 1e6 /
                 (omegaRated * omegaRated)
             val lossesW = 0.015 * ReferencePlant.RATED_GROSS_ELECTRIC_MW * 1e6 *
                 (freeRotorRpm / ReferencePlant.SYNCHRONOUS_RPM).coerceAtLeast(0.0)
+            rotorMechanicalLossMw = lossesW / 1.0e6
             val torqueNet = (expansion.mechanicalPowerMw * 1e6 - lossesW) / omegaMechanical
             freeRotorRpm = max(0.0, freeRotorRpm + (torqueNet / j) * dt * 60.0 / (2.0 * PI))
             rpm = freeRotorRpm
+            electromagneticPowerMw = 0.0
             electricalMw = 0.0
             rotorAngle += 2.0 * PI * (rpm / ReferencePlant.SYNCHRONOUS_RPM - 1.0) *
                 ReferencePlant.GRID_HZ * dt
@@ -391,6 +446,7 @@ internal class TurbineGeneratorModel(
         val j = 2.0 * GENERATOR_H_S * ReferencePlant.RATED_GROSS_ELECTRIC_MW * 1e6 /
             (omegaRated * omegaRated)
         val rotMj = 0.5 * j * omegaMech * omegaMech / 1e6
+        val stageMechanicalLossMw = max(0.0, expansion.thermodynamicWorkMw - expansion.mechanicalPowerMw)
 
         lastSnapshot = TurbineGeneratorSnapshot(
             governorValvePosition = valvePosition,
@@ -409,6 +465,10 @@ internal class TurbineGeneratorModel(
             synchronized = breakerClosed,
             tripped = turbineTrip,
             storedRotationalEnergyMj = rotMj,
+            thermodynamicWorkMw = expansion.thermodynamicWorkMw,
+            electromagneticPowerMw = electromagneticPowerMw,
+            stageMechanicalLossMw = stageMechanicalLossMw,
+            rotorMechanicalLossMw = rotorMechanicalLossMw,
             diagnostic = diagnostic,
         )
         return lastSnapshot
@@ -422,6 +482,7 @@ internal class TurbineGeneratorModel(
         val exhaustFlowKgS: Double,
         val exhaustEnthalpyKjKg: Double,
         val mechanicalPowerMw: Double,
+        val thermodynamicWorkMw: Double,
     )
 
     private fun thermodynamicExpansion(
@@ -434,7 +495,7 @@ internal class TurbineGeneratorModel(
         mechanicalEfficiency: Double,
     ): Expansion {
         if (steamFlow <= 1.0e-9) {
-            return Expansion(0.0, inletEnthalpy, 0.0, inletEnthalpy, 0.0)
+            return Expansion(0.0, inletEnthalpy, 0.0, inletEnthalpy, 0.0, 0.0)
         }
         val inlet = water.statePH(max(inletPressure, 0.01), inletEnthalpy)
         val hHpIso = water.enthalpyPS(INTERMEDIATE_PRESSURE_MPA, inlet.entropyKjKgK)
@@ -455,13 +516,15 @@ internal class TurbineGeneratorModel(
 
         val hpPowerKw = steamFlow * max(0.0, inletEnthalpy - hHpOut)
         val lpPowerKw = lpFlow * max(0.0, hHpOut - hLpOut)
-        val mechMw = (hpPowerKw + lpPowerKw) / 1000.0 * mechanicalEfficiency
+        val thermodynamicWorkMw = (hpPowerKw + lpPowerKw) / 1000.0
+        val mechMw = thermodynamicWorkMw * mechanicalEfficiency
         return Expansion(
             extractionFlowKgS = extraction,
             extractionEnthalpyKjKg = hHpOut,
             exhaustFlowKgS = lpFlow,
             exhaustEnthalpyKjKg = hLpOut,
             mechanicalPowerMw = mechMw,
+            thermodynamicWorkMw = thermodynamicWorkMw,
         )
     }
 
@@ -498,6 +561,10 @@ internal class TurbineGeneratorModel(
             synchronized = true,
             tripped = false,
             storedRotationalEnergyMj = 0.5 * j * omega * omega / 1e6,
+            thermodynamicWorkMw = expansion.thermodynamicWorkMw,
+            electromagneticPowerMw = ReferencePlant.RATED_GROSS_ELECTRIC_MW / GENERATOR_EFFICIENCY,
+            stageMechanicalLossMw = max(0.0, expansion.thermodynamicWorkMw - expansion.mechanicalPowerMw),
+            rotorMechanicalLossMw = 0.0,
         )
     }
 }

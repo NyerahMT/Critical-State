@@ -1,6 +1,5 @@
 package com.nyerahworks.criticalstate.sim
 
-import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.pow
 
@@ -174,18 +173,24 @@ internal data class ConservationSnapshot(
 )
 
 /**
- * Whole-plant conservation ledger. It treats fission heat as an internal source,
- * condenser cooling-water heat and generator output as boundary sinks, and
- * pressurizer relief as the only modeled water-mass loss to the environment.
+ * Whole-plant conservation ledger for the states actually represented by this
+ * reduced-order model.
+ *
+ * Fission and PZR heaters are modeled energy sources. Condenser cooling,
+ * relief enthalpy, turbine/generator work and explicit mechanical/thermal losses
+ * are modeled sinks. The feedwater pump's hydraulic work is explicitly added to
+ * feedwater enthalpy, so that part of the internal auxiliary load is credited
+ * back to the modeled water inventory. Other auxiliary motor/pump work is not
+ * deposited in a represented thermal node and therefore remains inside the
+ * electromagnetic-work sink. This is accounting of the existing causal model,
+ * not an invented electrical-bus subsystem.
  */
 internal class ConservationAudit {
     private var initialized = false
     private var referenceMassKg = 0.0
     private var referenceStoredEnergyMj = 0.0
     private var cumulativeReliefKg = 0.0
-    private var cumulativeNuclearInputMj = 0.0
-    private var cumulativeElectricalOutputMj = 0.0
-    private var cumulativeCoolingOutputMj = 0.0
+    private var cumulativeNetBoundaryEnergyMj = 0.0
     private var previousMassResidual = 0.0
     private var previousEnergyResidual = 0.0
 
@@ -194,9 +199,7 @@ internal class ConservationAudit {
         referenceMassKg = 0.0
         referenceStoredEnergyMj = 0.0
         cumulativeReliefKg = 0.0
-        cumulativeNuclearInputMj = 0.0
-        cumulativeElectricalOutputMj = 0.0
-        cumulativeCoolingOutputMj = 0.0
+        cumulativeNetBoundaryEnergyMj = 0.0
         previousMassResidual = 0.0
         previousEnergyResidual = 0.0
     }
@@ -205,28 +208,62 @@ internal class ConservationAudit {
         totalWaterMassKg: Double,
         totalStoredEnergyMj: Double,
         fissionPowerMw: Double,
-        generatorNetMw: Double,
+        turbineElectromagneticPowerMw: Double,
+        turbineStageMechanicalLossMw: Double,
+        rotorMechanicalLossMw: Double,
         condenserHeatRejectionMw: Double,
+        feedwaterHydraulicPowerMw: Double,
+        pressurizerHeaterPowerMw: Double,
+        pressurizerHeatLossMw: Double,
         reliefFlowKgS: Double,
+        reliefEnergyMw: Double,
         dt: Double,
     ): ConservationSnapshot {
-        if (!initialized) {
-            initialized = true
-            referenceMassKg = totalWaterMassKg
-            referenceStoredEnergyMj = totalStoredEnergyMj
+        if (dt <= 0.0) {
+            return ConservationSnapshot(
+                previousMassResidual,
+                0.0,
+                previousEnergyResidual,
+                0.0,
+            )
         }
-        cumulativeReliefKg += max(0.0, reliefFlowKgS) * dt
-        cumulativeNuclearInputMj += max(0.0, fissionPowerMw) * dt
-        cumulativeElectricalOutputMj += max(0.0, generatorNetMw) * dt
-        cumulativeCoolingOutputMj += max(0.0, condenserHeatRejectionMw) * dt
+
+        val reliefMassLossKg = max(0.0, reliefFlowKgS) * dt
+        val netBoundaryPowerMw =
+            max(0.0, fissionPowerMw) +
+                max(0.0, feedwaterHydraulicPowerMw) +
+                max(0.0, pressurizerHeaterPowerMw) -
+                max(0.0, turbineElectromagneticPowerMw) -
+                max(0.0, turbineStageMechanicalLossMw) -
+                max(0.0, rotorMechanicalLossMw) -
+                max(0.0, condenserHeatRejectionMw) -
+                max(0.0, pressurizerHeatLossMw) -
+                max(0.0, reliefEnergyMw)
+        val netBoundaryEnergyMj = netBoundaryPowerMw * dt
+
+        if (!initialized) {
+            // The audit is first called with the post-step state. Back-calculate
+            // the pre-step reference from the same boundary terms so the first
+            // production quantum is not manufactured as a conservation defect.
+            initialized = true
+            referenceMassKg = totalWaterMassKg + reliefMassLossKg
+            referenceStoredEnergyMj = totalStoredEnergyMj - netBoundaryEnergyMj
+            cumulativeReliefKg = reliefMassLossKg
+            cumulativeNetBoundaryEnergyMj = netBoundaryEnergyMj
+            previousMassResidual = 0.0
+            previousEnergyResidual = 0.0
+            return ConservationSnapshot(0.0, 0.0, 0.0, 0.0)
+        }
+
+        cumulativeReliefKg += reliefMassLossKg
+        cumulativeNetBoundaryEnergyMj += netBoundaryEnergyMj
 
         val expectedMass = referenceMassKg - cumulativeReliefKg
         val massResidual = totalWaterMassKg - expectedMass
-        val expectedStored = referenceStoredEnergyMj + cumulativeNuclearInputMj -
-            cumulativeElectricalOutputMj - cumulativeCoolingOutputMj
+        val expectedStored = referenceStoredEnergyMj + cumulativeNetBoundaryEnergyMj
         val energyResidual = totalStoredEnergyMj - expectedStored
-        val massDrift = if (dt > 0.0) (massResidual - previousMassResidual) / dt else 0.0
-        val energyDrift = if (dt > 0.0) (energyResidual - previousEnergyResidual) / dt else 0.0
+        val massDrift = (massResidual - previousMassResidual) / dt
+        val energyDrift = (energyResidual - previousEnergyResidual) / dt
         previousMassResidual = massResidual
         previousEnergyResidual = energyResidual
         return ConservationSnapshot(massResidual, massDrift, energyResidual, energyDrift)

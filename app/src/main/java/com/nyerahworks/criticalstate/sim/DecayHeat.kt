@@ -9,16 +9,19 @@ internal data class DecayHeatSnapshot(
 )
 
 /**
- * Eleven stored-energy decay groups fitted to the public Way-Wigner long-run
- * trend used by the model bible as an order-of-magnitude oracle.  The sum of
- * group fractions is ~6.675% at equilibrium; the prompt deposited fraction is
- * the complement so steady thermal power remains exactly the fission-power
- * normalization rather than being double counted.
+ * Ten active stored-energy decay groups fitted to the public Way-Wigner
+ * long-run trend used by the model bible as an order-of-magnitude oracle.
+ *
+ * The previous eleven-slot table contained a 0.2 s slot with exactly zero
+ * fraction. It contributed neither power nor stored energy, so it has been
+ * deleted rather than pretending it was a physical decay group. The remaining
+ * fractions are unchanged and still sum to ~6.675% at equilibrium; the prompt
+ * deposited fraction is the complement so steady thermal power remains exactly
+ * the fission-power normalization rather than being double counted.
  */
 internal class DecayHeatModel {
     companion object {
         private val HALF_LIFE_S = doubleArrayOf(
-            0.2,
             1.0023744673,
             5.0237728630,
             25.1785082359,
@@ -31,7 +34,6 @@ internal class DecayHeatModel {
             2_000_000.0,
         )
         val FRACTIONS = doubleArrayOf(
-            0.0,
             0.0054989284,
             0.0219465174,
             0.0090141344,
