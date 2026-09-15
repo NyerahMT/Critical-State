@@ -14,8 +14,8 @@ android {
         // Match the compatibility envelope of the known-good F-Droid APK.
         minSdk = 23
         targetSdk = 30
-        versionCode = 11
-        versionName = "0.4.0-operations-overhaul"
+        versionCode = 12
+        versionName = "0.5.0-fidelity-lock"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
