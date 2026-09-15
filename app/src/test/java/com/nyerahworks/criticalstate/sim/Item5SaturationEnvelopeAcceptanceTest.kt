@@ -178,7 +178,7 @@ class Item5SaturationEnvelopeAcceptanceTest {
             s.hotLegTemperatureK,
             s.coldLegTemperatureK,
             s.subcoolingMarginK,
-            s.hotChannelHeatFluxMwM2,
+            s.estimatedPeakFactorHeatFluxMwM2,
             s.primaryPressureMpa,
             s.totalPrimaryFlowKgPerS,
             s.pressurizerTemperatureK,
