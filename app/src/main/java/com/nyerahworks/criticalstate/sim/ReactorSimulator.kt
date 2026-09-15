@@ -330,6 +330,16 @@ class ReactorSimulator {
             dt = dt,
         )
         if (lastProtection.reactorTrip && !rod.scramActive) rods.scram()
+        // A protection trip caused by loss of forced RCS flow also removes the
+        // existing turbine load. This uses the already modeled turbine trip
+        // actuator; it does not invent a steam-dump or other secondary system.
+        if (
+            lastProtection.reactorTrip &&
+            "LOW RCS FLOW" in lastProtection.tripReasons &&
+            !turbineNow.tripped
+        ) {
+            turbine.trip()
+        }
 
         componentCondition.advance(
             loopSnapshots = loopNow,
