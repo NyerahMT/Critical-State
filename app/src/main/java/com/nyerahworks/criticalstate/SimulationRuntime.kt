@@ -13,10 +13,10 @@ import kotlin.math.max
  * Owns ReactorSimulator on a dedicated thread.
  *
  * The previous prototype advanced the entire coupled plant from the UI Handler,
- * so thermodynamic property work directly blocked input and drawing.  This
+ * so thermodynamic property work directly blocked input and drawing. This
  * runtime keeps every simulator mutation on one worker thread and publishes an
- * immutable PlantState snapshot to the main thread at a deliberately modest
- * cadence.  View code never touches the simulator directly.
+ * immutable operator-glass snapshot to the main thread at a deliberately modest
+ * cadence. View code never touches the simulator or its true process state.
  */
 class SimulationRuntime(
     private val listener: (PlantState, PerformanceSnapshot) -> Unit,
@@ -40,6 +40,7 @@ class SimulationRuntime(
     private val worker = Handler(thread.looper)
     private val main = Handler(Looper.getMainLooper())
     private val simulator = ReactorSimulator()
+    private val operatorGlass = OperatorGlass()
 
     private var active = false
     private var running = true
@@ -51,13 +52,14 @@ class SimulationRuntime(
         override fun run() {
             if (!active) return
             val tickStart = SystemClock.elapsedRealtimeNanos()
-            val beforeSim = simulator.snapshot().simulationSeconds
 
-            val state = if (running) {
+            val trueState = if (running) {
                 simulator.advance(WALL_QUANTUM_S, timeScale)
             } else {
                 simulator.snapshot()
             }
+            val simulatedDelta = trueState.simulationSeconds - lastPublishedSimulationSeconds
+            val state = operatorGlass.present(trueState, simulatedDelta)
 
             val computeEnd = SystemClock.elapsedRealtimeNanos()
             val computeMillis = (computeEnd - tickStart) / 1_000_000.0
@@ -66,11 +68,10 @@ class SimulationRuntime(
             } else {
                 max(1.0e-6, (computeEnd - lastWallNanos) / 1_000_000_000.0)
             }
-            val simulatedDelta = state.simulationSeconds - lastPublishedSimulationSeconds
             val effective = if (running) simulatedDelta / wallDeltaSeconds else 0.0
             val tickMillis = wallDeltaSeconds * 1000.0
             lastWallNanos = computeEnd
-            lastPublishedSimulationSeconds = state.simulationSeconds
+            lastPublishedSimulationSeconds = trueState.simulationSeconds
 
             val perf = PerformanceSnapshot(
                 requestedTimeScale = timeScale,
@@ -134,6 +135,7 @@ class SimulationRuntime(
 
     fun resetPlant() = command {
         simulator.reset()
+        operatorGlass.reset()
         running = true
         timeScale = 1.0
         lastPublishedSimulationSeconds = simulator.snapshot().simulationSeconds
