@@ -504,7 +504,7 @@ class MainActivity : Activity() {
         metric("pr_power", "NEUTRONICS", "%.1f %%".us(powerPct), "period ${periodText(s.reactorPeriodSeconds)} • Xe %.3f".us(s.xenonInventory), accentForPower(powerPct))
         metric("pr_rho", "REACTIVITY", "%+.1f pcm".us(s.totalReactivityPcm), "rod %+.0f • Dopp %+.0f • B %+.0f".us(s.rodReactivityPcm, s.dopplerReactivityPcm, s.boronReactivityPcm), if (abs(s.totalReactivityPcm) > 100.0) ControlPalette.Amber else ControlPalette.Text)
         metric("pr_core", "CORE THERMAL", "%.0f / %.0f K".us(s.fuelTemperatureK, s.cladTemperatureK), "peak %.0f / %.0f • subcool %.1f K".us(s.fuelPeakTemperatureK, s.cladPeakTemperatureK, s.subcoolingMarginK), ControlPalette.Amber)
-        metric("pr_pzr", "PRESSURIZER", "%.3f MPa".us(s.primaryPressureMpa), "level %.1f%% • surge %+.0f kg/s".us(s.pressurizerLevelFraction * 100.0, s.pressurizerSurgeKgPerS), accentForPressure(s.primaryPressureMpa))
+        metric("pr_pzr", "PRESSURIZER", "%.3f MPa".us(s.primaryPressureMpa), "level %.1f%% • inv budget %+.0f kg/s".us(s.pressurizerLevelFraction * 100.0, s.pressurizerSurgeKgPerS), accentForPressure(s.primaryPressureMpa))
 
         rcpButtons.forEachIndexed { i, button ->
             val flow = s.loopFlowKgPerS.getOrElse(i) { 0.0 }
