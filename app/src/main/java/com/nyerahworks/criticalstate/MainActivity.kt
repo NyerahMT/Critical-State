@@ -1,6 +1,7 @@
 package com.nyerahworks.criticalstate
 
 import android.app.Activity
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -20,6 +21,7 @@ import com.nyerahworks.criticalstate.ui.ControlPalette
 import com.nyerahworks.criticalstate.ui.MetricTile
 import com.nyerahworks.criticalstate.ui.PlantSchematicView
 import com.nyerahworks.criticalstate.ui.TrendStripView
+import com.nyerahworks.criticalstate.ui.buttonBackground
 import com.nyerahworks.criticalstate.ui.panelBackground
 import java.util.Locale
 import kotlin.math.abs
@@ -102,14 +104,14 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(ControlPalette.Background)
-            setPadding(dp(8), dp(6), dp(8), dp(6))
+            setPadding(dp(7), dp(5), dp(7), dp(5))
         }
         root.addView(buildHeader(), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(60)))
 
         alarmText = text("NO ACTIVE ALARMS", 10f, ControlPalette.Green, true).apply {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(8), 0, dp(8), 0)
-            background = rounded(Color.rgb(11, 25, 22), ControlPalette.Border, 6f)
+            background = panelBackground(0f, resources.displayMetrics.density, emphasized = true)
         }
         root.addView(alarmText, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(26)).apply {
             setMargins(0, dp(3), 0, dp(5))
@@ -135,7 +137,7 @@ class MainActivity : Activity() {
     private fun buildHeader(): View = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        background = panelBackground(8f, resources.displayMetrics.density, emphasized = true)
+        background = panelBackground(0f, resources.displayMetrics.density, emphasized = true)
         setPadding(dp(10), dp(5), dp(6), dp(5))
 
         val identity = LinearLayout(this@MainActivity).apply {
@@ -165,7 +167,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
         }
         schematic = PlantSchematicView(this).apply {
-            background = panelBackground(8f, resources.displayMetrics.density)
+            background = panelBackground(0f, resources.displayMetrics.density)
         }
         root.addView(schematic, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 0.30f).apply {
             setMargins(0, 0, 0, dp(5))
@@ -254,6 +256,9 @@ class MainActivity : Activity() {
         rodSeek = SeekBar(this).apply {
             max = 1000
             progress = 550
+            progressTintList = ColorStateList.valueOf(ControlPalette.Cyan)
+            progressBackgroundTintList = ColorStateList.valueOf(ControlPalette.Grid)
+            thumbTintList = ColorStateList.valueOf(ControlPalette.Text)
             setOnSeekBarChangeListener(simpleSeek { progress -> runtime.setRodInsertion(progress / 1000.0) })
         }
         controls.addView(rodSeek, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(32)))
@@ -315,6 +320,9 @@ class MainActivity : Activity() {
         loadSeek = SeekBar(this).apply {
             max = 80
             progress = 70
+            progressTintList = ColorStateList.valueOf(ControlPalette.Green)
+            progressBackgroundTintList = ColorStateList.valueOf(ControlPalette.Grid)
+            thumbTintList = ColorStateList.valueOf(ControlPalette.Text)
             setOnSeekBarChangeListener(simpleSeek { progress -> runtime.setTurbineLoad((30 + progress) / 100.0) })
         }
         loadPanel.addView(loadSeek, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(34)))
@@ -344,7 +352,7 @@ class MainActivity : Activity() {
         }
         val detail = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            background = panelBackground(8f, resources.displayMetrics.density)
+            background = panelBackground(0f, resources.displayMetrics.density)
             setPadding(dp(8), dp(5), dp(8), dp(5))
         }
         auditDetailText = mono("CONSERVATION", 8.5f, ControlPalette.Muted).apply { gravity = Gravity.TOP }
@@ -359,7 +367,7 @@ class MainActivity : Activity() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            background = panelBackground(8f, resources.displayMetrics.density, emphasized = true)
+            background = panelBackground(0f, resources.displayMetrics.density, emphasized = true)
             setPadding(dp(3), dp(3), dp(3), dp(3))
         }
         val items = listOf(
@@ -404,7 +412,7 @@ class MainActivity : Activity() {
 
     private fun panel(title: String): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        background = panelBackground(8f, resources.displayMetrics.density)
+        background = panelBackground(0f, resources.displayMetrics.density)
         setPadding(dp(8), dp(5), dp(8), dp(5))
         addView(text(title, 9f, ControlPalette.Muted, true))
     }
@@ -422,10 +430,10 @@ class MainActivity : Activity() {
         navButtons.forEach { (target, button) ->
             val selected = target == screen
             button.setTextColor(if (selected) ControlPalette.Text else ControlPalette.Muted)
-            button.background = rounded(
-                if (selected) Color.rgb(31, 48, 61) else Color.TRANSPARENT,
-                if (selected) ControlPalette.Cyan else Color.TRANSPARENT,
-                6f,
+            button.background = buttonBackground(
+                if (selected) ControlPalette.Cyan else ControlPalette.Muted,
+                resources.displayMetrics.density,
+                selected,
             )
         }
     }
@@ -618,14 +626,14 @@ class MainActivity : Activity() {
 
     private fun controlButton(label: String, accent: Int, action: () -> Unit) = Button(this).apply {
         text = label
-        textSize = 10f
+        textSize = 9.5f
         isAllCaps = false
         setTextColor(accent)
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
         minHeight = 0
         minWidth = 0
         setPadding(dp(4), 0, dp(4), 0)
-        background = rounded(Color.rgb(20, 29, 38), ControlPalette.Border, 6f)
+        background = buttonBackground(accent, resources.displayMetrics.density)
         setOnClickListener { action() }
     }
 
@@ -640,7 +648,7 @@ class MainActivity : Activity() {
         text = value
         textSize = size
         setTextColor(color)
-        if (bold) setTypeface(typeface, Typeface.BOLD)
+        typeface = Typeface.create(Typeface.MONOSPACE, if (bold) Typeface.BOLD else Typeface.NORMAL)
     }
 
     private fun mono(value: String, size: Float, color: Int) = text(value, size, color, false).apply {
