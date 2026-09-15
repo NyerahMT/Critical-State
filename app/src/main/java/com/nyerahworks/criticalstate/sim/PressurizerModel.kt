@@ -1,6 +1,5 @@
 package com.nyerahworks.criticalstate.sim
 
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
 
@@ -18,6 +17,7 @@ internal data class PressurizerSnapshot(
     val totalMassKg: Double,
     val internalEnergyKj: Double,
     val inventoryResidualKg: Double,
+    val saturationEnvelopeValid: Boolean = true,
     val diagnostic: String? = null,
 )
 
@@ -77,19 +77,21 @@ internal class PressurizerModel(
         massKg = referenceMassKg
         energyKj = referenceEnergyKj
         equilibrium = solver.solve(massKg, energyKj)
+        appendSaturationDiagnostic()
     }
 
     fun reset(): PressurizerSnapshot {
         massKg = referenceMassKg
         energyKj = referenceEnergyKj
+        diagnostic = null
         equilibrium = solver.solve(massKg, energyKj)
+        appendSaturationDiagnostic()
         heaterFraction = 0.0
         sprayFraction = 0.0
         surgeFlowKgS = 0.0
         sprayFlowKgS = 0.0
         reliefFlowKgS = 0.0
         inventoryResidualKg = 0.0
-        diagnostic = null
         return snapshot()
     }
 
@@ -140,11 +142,15 @@ internal class PressurizerModel(
         }
 
         equilibrium = solver.solve(massKg, energyKj)
+        appendSaturationDiagnostic()
         inventoryResidualKg = primaryLiquidMassKg + massKg - totalPrimaryInventoryKg
-        if (abs(equilibrium.residualKjKg) > 0.75) {
-            diagnostic = "Pressurizer phase closure outside equilibrium envelope"
-        }
         return snapshot()
+    }
+
+    private fun appendSaturationDiagnostic() {
+        if (equilibrium.saturationEnvelopeValid) return
+        val flag = "PZR saturation (m,U) envelope invalid: ${equilibrium.diagnostic ?: "unspecified closure failure"}"
+        diagnostic = listOfNotNull(diagnostic, flag).joinToString("; ")
     }
 
     fun snapshot(): PressurizerSnapshot = PressurizerSnapshot(
@@ -161,6 +167,7 @@ internal class PressurizerModel(
         totalMassKg = massKg,
         internalEnergyKj = energyKj,
         inventoryResidualKg = inventoryResidualKg,
+        saturationEnvelopeValid = equilibrium.saturationEnvelopeValid,
         diagnostic = diagnostic,
     )
 }
