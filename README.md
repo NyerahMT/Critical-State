@@ -10,26 +10,30 @@ The guiding rule is:
 
 ## Current coupled plant
 
-Version **0.3.0-coupled-plant** implements the first complete real-time reference-plant chain:
+Version **0.5.0-fidelity-lock** closes the first target-fidelity pass for the complete real-time reference-plant chain:
 
 - six-group point reactor kinetics with equilibrium precursor initialization, source term and inhour-period verification;
-- finite-speed control-bank motion, nonlinear integral worth and finite-time SCRAM insertion;
+- finite-speed control-bank motion, nonlinear integral worth, 5000 pcm full-bank worth and finite-time SCRAM insertion;
 - Doppler, moderator-density, soluble-boron, iodine/xenon and promethium/samarium reactivity;
-- eleven-group stored-energy decay heat preserving prior operating history;
-- six axial core thermal regions with radial fuel storage, cladding storage, coolant enthalpy transport, hot-channel indication and IF97 subcooling margin;
+- ten active stored-energy decay-heat groups preserving prior operating history;
+- six axial core thermal regions with radial fuel storage, cladding storage, coolant enthalpy transport, estimated peak-factor heat-flux indication and IF97 subcooling margin;
 - four independent primary loops with hot/cold-leg transport, Darcy/minor losses, dynamic mass flow, centrifugal RCP curves, rotor inertia, coastdown and natural-circulation head;
-- a fixed-volume two-phase pressurizer with conserved mass/internal energy, surge, heaters, spray and generic relief flow;
-- four dynamic steam generators with segmented primary heat transfer, tube-wall thermal inertia, conserved secondary mass/energy, boiling, steam export, level and feedwater demand;
+- a fixed-volume saturation pressurizer with conserved mass/internal energy, swell/inventory transfer budgeting, heaters, spray and generic relief flow;
+- four dynamic steam generators with segmented primary heat transfer, tube-wall thermal inertia, conserved saturation-secondary mass/energy, boiling, steam export, level and automatic feedwater demand;
 - a dynamic main-steam header;
 - a two-stage reduced steam turbine using a Stodola pressure-flow relation and IF97 isentropic expansion;
 - turbine-generator inertia, grid synchronization/breaker logic, swing-equation behavior, gross/net MW and reactive-power indication;
 - condenser/hotwell mass and energy storage with cooling-water heat rejection and thermodynamic vacuum;
 - a physical feedwater train with pump dynamics, valve distribution and extraction-steam heating;
 - dynamic instrumentation and generic redundant protection channels with latching reactor-trip logic;
+- operator-facing process values routed through instrumentation channels while diagnostics retain true solver state;
+- explicit saturation-envelope diagnostics for the PZR, SG secondary volumes and condenser;
 - hidden equipment condition that changes physical component parameters rather than a visible health-stat multiplier;
 - long-timescale generation/revenue/debt accounting driven by actual net electrical output;
-- whole-plant mass/energy residual diagnostics;
+- whole-plant mass/energy residual diagnostics with modeled boundary-energy accounting;
 - 1x, 10x and 60x simulation speeds using bounded physical substeps rather than enlarged game timesteps.
+
+Detailed acceptance evidence for this release is in [`docs/FIDELITY_LOCK_0_5.md`](docs/FIDELITY_LOCK_0_5.md).
 
 ## Reference plant
 
@@ -44,9 +48,27 @@ Representative scale:
 - 193 fuel assemblies, 17 x 17 lattice, 264 fuel rods/assembly;
 - active fuel length: 3.6576 m;
 - steam-generator secondary pressure: roughly 6.2 MPa reference state;
-- roughly 1 GWe-class power conversion.
+- gross output target: about 1.15 GWe;
+- net output target: about 1.115 GWe.
 
 These values define a game/reference model. They are **not** a reconstruction of an operating station.
+
+## Validated target-fidelity envelope
+
+The current CI acceptance suite includes:
+
+- a 600 s autonomous full-power design hold;
+- finite-time SCRAM with thousands of pcm of shutdown worth and retained decay heat;
+- one-RCP coastdown and all-RCP-off natural-circulation behavior;
+- full-power turbine trip with continuous secondary evolution;
+- automatic SG level and pressurizer response to ±10% load commands;
+- explicit saturation-envelope reporting rather than silent best-guess vessel states;
+- a 60-minute nominal run through the actual 60x fast-forward path;
+- bounded whole-plant mass and energy residuals.
+
+At the 3600 s nominal 60x checkpoint, the accepted run held approximately 15.464 MPa primary pressure, 582.388 K average primary temperature, 17,083.6 kg/s primary flow, 0.65000 mean SG level and 1109.90 MWe net output, with about -0.619 kg mass residual and -1.326 MJ cumulative energy residual.
+
+Deep shutdown/cooldown can leave the declared saturation-only equilibrium-volume domain. Those departures are flagged explicitly; they are not presented as validated saturation states.
 
 ## Architecture
 
@@ -65,7 +87,7 @@ Actuators / automatic controllers
     |                       fuel / clad / coolant
     |                                 |
     |                                 v
-    +--> RCPs --> four-loop RCS hydraulics <--> pressurizer
+    +--> RCPs --> four-loop RCS hydraulics <--> pressurizer inventory budget
                                       |
                                       v
                            four steam generators
@@ -84,7 +106,7 @@ Actuators / automatic controllers
                                       |
                                       +--------> SGs
 
-True physical state --> sensors --> protection / UI
+True physical state --> sensors --> protection / operator glass
 True physical state --> conservation audit / degradation / economics
 ```
 
@@ -94,7 +116,7 @@ True physical state --> conservation audit / degradation / economics
 
 Rendering is decoupled from the physical solver. The plant uses bounded thermal-hydraulic steps and smaller kinetics substeps. Each plant step performs coupled half-steps to reduce feedback lag across neutronics, core thermal response, RCS hydraulics and the secondary plant. Fast-forward advances many stable physical steps rather than multiplying a single timestep by the speed factor.
 
-The test suite exercises the declared reference state, rod-drive dynamics, neutronic response, SCRAM/decay heat, RCP coastdown, protection behavior, IF97 state recovery, inhour behavior, fast-forward positivity/finite-state behavior and coupled-plant sanity checks.
+The test suite exercises the declared reference state, rod-drive dynamics, neutronic response, SCRAM/decay heat, RCP coastdown, protection behavior, IF97 state recovery, saturation-envelope handling, operator-instrument lag, load-step control recovery, turbine-trip causality, fast-forward positivity/finite-state behavior and long-duration conservation closure.
 
 ## Model status and limitations
 
@@ -108,6 +130,8 @@ The current implementation intentionally does **not** claim:
 - RELAP5/TRACE-class two-fluid system thermal hydraulics;
 - validated vendor CHF/DNBR correlations;
 - proprietary pump, turbine or steam-generator maps;
+- explicit surge-line hydraulic momentum;
+- general subcooled/superheated two-phase vessel closure outside the declared saturation envelope;
 - structural/finite-element fuel or vessel analysis;
 - prediction of a specific operating reactor.
 
