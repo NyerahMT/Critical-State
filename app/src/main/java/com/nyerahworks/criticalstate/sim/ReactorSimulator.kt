@@ -439,7 +439,7 @@ class ReactorSimulator {
             hotLegTemperatureK = hotAvg,
             coldLegTemperatureK = coldAvg,
             subcoolingMarginK = coreS.subcoolingMarginK,
-            hotChannelHeatFluxMwM2 = coreS.hotChannelHeatFluxMwM2,
+            estimatedPeakFactorHeatFluxMwM2 = coreS.estimatedPeakFactorHeatFluxMwM2,
             primaryPressureMpa = pzr.pressureMpa,
             totalPrimaryFlowKgPerS = totalFlow,
             loopFlowKgPerS = loopS.map { it.massFlowKgS },
