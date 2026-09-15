@@ -367,15 +367,21 @@ class ReactorSimulator {
             totalWaterMassKg = totalWaterMass,
             totalStoredEnergyMj = totalStoredEnergy,
             fissionPowerMw = fissionPowerMw,
-            generatorNetMw = turbineNow.generatorNetMw,
+            turbineElectromagneticPowerMw = turbineNow.electromagneticPowerMw,
+            turbineStageMechanicalLossMw = turbineNow.stageMechanicalLossMw,
+            rotorMechanicalLossMw = turbineNow.rotorMechanicalLossMw,
             condenserHeatRejectionMw = condenserNow.heatRejectionMw,
+            // SGs consumed feedwaterBefore this step, including this hydraulic
+            // enthalpy rise. feedwaterNow belongs to the next coupled step.
+            feedwaterHydraulicPowerMw = feedwaterBefore.pump.hydraulicPowerMw,
+            pressurizerHeaterPowerMw = pzrNow.heaterPowerMw,
+            pressurizerHeatLossMw = pzrNow.heatLossMw,
             reliefFlowKgS = pzrNow.reliefFlowKgPerS,
+            reliefEnergyMw = pzrNow.reliefEnergyMw,
             dt = dt,
         )
 
         simulationSeconds += dt
-        // Consume these snapshots so Kotlin does not optimize away the explicit
-        // slow-state updates in future refactors.
         @Suppress("UNUSED_VARIABLE")
         val slowStateCheck = chemistryNow.boronPpm + poisonNow.xenon + headerNow.pressureMpa
     }
