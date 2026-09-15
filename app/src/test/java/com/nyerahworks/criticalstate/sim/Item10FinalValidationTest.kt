@@ -149,8 +149,8 @@ class Item10FinalValidationTest {
     private fun validateSixtyMinuteFastForwardAndConservation(report: StringBuilder) {
         val sim = ReactorSimulator()
         var s = sim.snapshot()
-        val checkpoints = setOf(600, 1800, 3600)
-        var nextSecond = 0
+        val checkpoints = listOf(600, 1800, 3600)
+        var checkpointIndex = 0
         // Exercise the actual 60x API while accumulating a full simulated hour.
         repeat(600) {
             s = sim.advance(0.10, 60.0) // 6 simulated seconds per runtime quantum
@@ -162,31 +162,46 @@ class Item10FinalValidationTest {
             assertTrue("60x left saturation envelope at design hold: ${s.diagnostic}", flags(s) == "NONE")
             assertFalse("60x design hold tripped", s.tripped)
             assertTrue("60x design hold opened breaker", s.generatorBreakerClosed)
-            val rounded = s.simulationSeconds.toInt()
-            for (cp in checkpoints) {
-                if (nextSecond < cp && rounded >= cp) {
-                    nextSecond = cp
-                    val inputEnergyMj = ReferencePlant.RATED_THERMAL_POWER_MW * s.simulationSeconds
-                    val fractionalEnergyClosure = abs(s.energyConservationErrorMj) / inputEnergyMj
-                    report.append(String.format(
-                        Locale.US,
-                        "ITEM10 60X t=%4ds P=%.5fMPa Tavg=%.3fK flow=%.1f SG=%.5f net=%.2fMW massRes=%+.3fkg energyRes=%+.3fMJ energyRate=%+.3fMW fracClosure=%.6f flags=%s\n",
-                        cp, s.primaryPressureMpa, 0.5 * (s.hotLegTemperatureK + s.coldLegTemperatureK),
-                        s.totalPrimaryFlowKgPerS, s.steamGeneratorLevelFraction.average(), s.generatorPowerMw,
-                        s.massConservationErrorKg, s.energyConservationErrorMj, s.plantEnergyResidualMw,
-                        fractionalEnergyClosure, flags(s),
-                    ))
-                }
+
+            while (
+                checkpointIndex < checkpoints.size &&
+                s.simulationSeconds + 1.0e-6 >= checkpoints[checkpointIndex]
+            ) {
+                val cp = checkpoints[checkpointIndex]
+                val inputEnergyMj = ReferencePlant.RATED_THERMAL_POWER_MW * s.simulationSeconds
+                val fractionalEnergyClosure = abs(s.energyConservationErrorMj) / inputEnergyMj
+                report.append(String.format(
+                    Locale.US,
+                    "ITEM10 60X t=%4ds P=%.5fMPa Tavg=%.3fK flow=%.1f SG=%.5f net=%.2fMW massRes=%+.3fkg energyRes=%+.3fMJ energyRate=%+.3fMW fracClosure=%.8f flags=%s\n",
+                    cp, s.primaryPressureMpa, 0.5 * (s.hotLegTemperatureK + s.coldLegTemperatureK),
+                    s.totalPrimaryFlowKgPerS, s.steamGeneratorLevelFraction.average(), s.generatorPowerMw,
+                    s.massConservationErrorKg, s.energyConservationErrorMj, s.plantEnergyResidualMw,
+                    fractionalEnergyClosure, flags(s),
+                ))
+                checkpointIndex += 1
             }
         }
+
         assertTrue("60x run did not reach one simulated hour", s.simulationSeconds >= 3599.9)
-        assertTrue("mass residual excessive after 60 min: ${s.massConservationErrorKg}", abs(s.massConservationErrorKg) < 100.0)
-        // Keep this initial bound deliberately tied to rated thermal power; if
-        // the measured ledger shows secular drift, the ledger itself is fixed
-        // rather than hiding it behind this diagnostic gate.
+        assertTrue("60x missed a requested conservation checkpoint", checkpointIndex == checkpoints.size)
+
+        val finalInputEnergyMj = ReferencePlant.RATED_THERMAL_POWER_MW * s.simulationSeconds
+        val finalFractionalEnergyClosure = abs(s.energyConservationErrorMj) / finalInputEnergyMj
+        // These are closure tolerances for the reduced-order states we actually
+        // conserve, not physical transient limits. 1 MW is 0.029% of rated
+        // thermal power; 1e-4 cumulative closure is 0.01% of nuclear input.
+        // Both leave numerical-platform margin while rejecting secular drift.
         assertTrue(
-            "instantaneous energy closure defect exceeds 2% rated: ${s.plantEnergyResidualMw} MW",
-            abs(s.plantEnergyResidualMw) < 0.02 * ReferencePlant.RATED_THERMAL_POWER_MW,
+            "mass residual excessive after 60 min: ${s.massConservationErrorKg}",
+            abs(s.massConservationErrorKg) < 10.0,
+        )
+        assertTrue(
+            "instantaneous modeled-energy closure defect exceeds 1 MW: ${s.plantEnergyResidualMw} MW",
+            abs(s.plantEnergyResidualMw) < 1.0,
+        )
+        assertTrue(
+            "cumulative modeled-energy closure exceeds 1e-4 of nuclear input: $finalFractionalEnergyClosure",
+            finalFractionalEnergyClosure < 1.0e-4,
         )
     }
 
